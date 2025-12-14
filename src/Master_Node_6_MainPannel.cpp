@@ -4,6 +4,7 @@
 // แก้ไขไฟลล์ให้เป็นไปตามมาตรฐาน C++11 เปลี่ยนนามสกุล .ino เป็น .cpp เพิ่มการ declare ฟังก์ชันข้างบน main code
 // disable auto reset function for testing purpose
 
+
 #include <SPI.h>  
 #include <SimpleTimer.h>
 #include <Wire.h>
