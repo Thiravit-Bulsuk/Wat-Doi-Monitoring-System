@@ -728,9 +728,12 @@ void setup() {
     xTaskCreate(MainTask, "MainTask", 10000, NULL, 1, &TaskMain);
     // Create MQTT Timer Task
     xTaskCreate(MqttTimerTask, "MqttTimerTask", 10000, NULL, 1, &TaskMqttTimer);
-    // สร้าง Task สำหรับรีเซ็ตอัตโนมัติ
-    xTaskCreate(ResetTimerTask, "ResetTimerTask", 1000, NULL, 1, &TaskResetTimer);
     xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
+
+    // สร้าง Task สำหรับรีเซ็ตอัตโนมัติ
+    // disableชั่วคราวเพื่อทดสอบ
+    //xTaskCreate(ResetTimerTask, "ResetTimerTask", 1000, NULL, 1, &TaskResetTimer);
+
 
 }
 
