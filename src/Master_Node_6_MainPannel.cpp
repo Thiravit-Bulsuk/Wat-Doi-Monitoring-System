@@ -654,7 +654,7 @@ void setup() {
     // Initialize OLED Display
     display.init();
     display.clear();
-    display.setContrast(255);
+    display.setContrast(150);
     display.display();   
     
     pinMode(RELAY_PIN_1, OUTPUT);
