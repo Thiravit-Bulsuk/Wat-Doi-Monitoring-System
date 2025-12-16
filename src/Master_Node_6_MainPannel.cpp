@@ -406,9 +406,6 @@ void activateRelay(uint8_t nodeID) {
 
 // Function to reset notifications and relays
 void resetNotification() {
-    // หยุดการทำงานของ Task แสดงผลชั่วคราว เพื่อป้องกันการเขียนทับหน้าจอ
-    vTaskSuspend(TaskDisplay);
-
     notification1Sent = false;
     notification2Sent = false;
     notification3Sent = false;
@@ -434,12 +431,8 @@ void resetNotification() {
     display.drawString(64, 40, "RESET");
     display.display();
 
-    vTaskDelay(5000 / portTICK_PERIOD_MS); // ใช้ vTaskDelay แทน delay()
-    display.clear();
-    display.display();
-
-    vTaskResume(TaskDisplay); // ให้ Task แสดงผลกลับมาทำงานตามปกติ
-
+    // หน่วงเวลาเพื่อให้ข้อความแสดงผลค้างไว้
+    delay(5000);
 }
 
 void VextON(void) {
@@ -752,8 +745,12 @@ void MainTask(void *parameter) {
     if (buttonPressed && (millis() - buttonPressTime >= LONG_PRESS_DURATION)) {
         if (!resetTriggered) {
             Serial.println("Long press detected! Resetting notifications.");
+            vTaskSuspend(TaskDisplay);      // หยุด Task แสดงผลชั่วคราว
             resetNotification();            // เรียกใช้ฟังก์ชันรีเซ็ตการแจ้งเตือน
+            vTaskDelay(100 / portTICK_PERIOD_MS); // หน่วงเวลาเล็กน้อย
+            vTaskResume(TaskDisplay);       // ให้ Task แสดงผลกลับมาทำงานต่อ
             resetTriggered = true;          // ป้องกันการเรียกซ้ำ
+
         }
     }
 
