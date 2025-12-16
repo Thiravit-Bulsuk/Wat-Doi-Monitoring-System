@@ -406,6 +406,9 @@ void activateRelay(uint8_t nodeID) {
 
 // Function to reset notifications and relays
 void resetNotification() {
+    // หยุดการทำงานของ Task แสดงผลชั่วคราว เพื่อป้องกันการเขียนทับหน้าจอ
+    vTaskSuspend(TaskDisplay);
+
     notification1Sent = false;
     notification2Sent = false;
     notification3Sent = false;
@@ -431,9 +434,11 @@ void resetNotification() {
     display.drawString(64, 40, "RESET");
     display.display();
 
-    delay(5000);
+    vTaskDelay(5000 / portTICK_PERIOD_MS); // ใช้ vTaskDelay แทน delay()
     display.clear();
     display.display();
+
+    vTaskResume(TaskDisplay); // ให้ Task แสดงผลกลับมาทำงานตามปกติ
 
 }
 
