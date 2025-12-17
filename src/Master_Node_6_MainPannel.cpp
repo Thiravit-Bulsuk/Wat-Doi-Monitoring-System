@@ -2,6 +2,9 @@
 //แก้ไขหน้าจอทับซ้อนเวลาเน็ตหลุด แก้ไขหน้าจอแสดงผลตลอดเวลาทำให้หน้าจอหมอง
 // แก้ไข การแจ้งเตือนเมื่อเซ็นเซอร์ทำงานผิดพลาด โดยให้มีการนับ หากน้ำต่ำกว่าครึ่งแทงค์ถึงสามครั้งจึงจะแจ้งเตือน 
 // แก้ไขไฟลล์ให้เป็นไปตามมาตรฐาน C++11 เปลี่ยนนามสกุล .ino เป็น .cpp เพิ่มการ declare ฟังก์ชันข้างบน main code
+// disable auto reset function for testing purpose
+//  ลดความสว่างหน้าจอเหลือ 150
+
 
 #include <SPI.h>  
 #include <SimpleTimer.h>
@@ -429,10 +432,8 @@ void resetNotification() {
     display.drawString(64, 40, "RESET");
     display.display();
 
+    // หน่วงเวลาเพื่อให้ข้อความแสดงผลค้างไว้
     delay(5000);
-    display.clear();
-    display.display();
-
 }
 
 void VextON(void) {
@@ -654,7 +655,7 @@ void setup() {
     // Initialize OLED Display
     display.init();
     display.clear();
-    display.setContrast(255);
+    display.setContrast(150);
     display.display();   
     
     pinMode(RELAY_PIN_1, OUTPUT);
@@ -728,9 +729,12 @@ void setup() {
     xTaskCreate(MainTask, "MainTask", 10000, NULL, 1, &TaskMain);
     // Create MQTT Timer Task
     xTaskCreate(MqttTimerTask, "MqttTimerTask", 10000, NULL, 1, &TaskMqttTimer);
-    // สร้าง Task สำหรับรีเซ็ตอัตโนมัติ
-    xTaskCreate(ResetTimerTask, "ResetTimerTask", 1000, NULL, 1, &TaskResetTimer);
     xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
+
+    // สร้าง Task สำหรับรีเซ็ตอัตโนมัติ
+    // disableชั่วคราวเพื่อทดสอบ
+    //xTaskCreate(ResetTimerTask, "ResetTimerTask", 1000, NULL, 1, &TaskResetTimer);
+
 
 }
 
@@ -742,8 +746,12 @@ void MainTask(void *parameter) {
     if (buttonPressed && (millis() - buttonPressTime >= LONG_PRESS_DURATION)) {
         if (!resetTriggered) {
             Serial.println("Long press detected! Resetting notifications.");
+            vTaskSuspend(TaskDisplay);      // หยุด Task แสดงผลชั่วคราว
             resetNotification();            // เรียกใช้ฟังก์ชันรีเซ็ตการแจ้งเตือน
+            vTaskDelay(100 / portTICK_PERIOD_MS); // หน่วงเวลาเล็กน้อย
+            vTaskResume(TaskDisplay);       // ให้ Task แสดงผลกลับมาทำงานต่อ
             resetTriggered = true;          // ป้องกันการเรียกซ้ำ
+
         }
     }
 
