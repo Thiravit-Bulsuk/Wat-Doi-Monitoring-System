@@ -85,6 +85,7 @@ const char* sensor2_topic = "PhraNon";
 const char* sensor3_topic = "ThamYai";
 const char* sensor4_topic = "RongPui";  // New Node RongPui
 const char* sensor5_topic = "NongPog";      // SPD topic
+const char* message_topic = "message_topic";
 
 const unsigned long mqttSendInterval = 600000;
 // Flag to track when new data is received
@@ -228,6 +229,7 @@ void sendLineMessage(String message) {
     client.print(request);
 
     Serial.println("LINE Message Sent: " + message);
+    publishMessage(message_topic, message, true);
     delay(200);
     client.stop();
 }
