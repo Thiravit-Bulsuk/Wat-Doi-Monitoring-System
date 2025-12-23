@@ -598,8 +598,8 @@ void reconnect() {
 // Loop until we’re reconnected
 while (!client.connected()) {
 Serial.print( "Attempting MQTT connection..." );
-String clientId = "ESP32Client-"; // Create a random client ID
-clientId += String(random(0xffff), HEX);
+String clientId = "ESP32Client-"; 
+clientId += String(WiFi.macAddress()); // Use MAC Address for stable Client ID
 // Attempt to connect
 if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
 Serial.println("connected");
@@ -784,17 +784,18 @@ void MainTask(void *parameter) {
 
     CeckCommError();
 
-    // เรียก wifiMulti.run() ทุกครั้งเพื่อตรวจสอบและพยายามเชื่อมต่อใหม่
-    if (wifiMulti.run() == WL_CONNECTED) {
+    // ตรวจสอบสถานะ WiFi ก่อน ถ้าหลุดค่อยเรียก wifiMulti.run()
+    if (WiFi.status() == WL_CONNECTED) {
         if (!internetConnected) {
             Serial.println("Wi-Fi reconnected");
             internetConnected = true;
         }
     } else {
-        if (internetConnected) {
-            Serial.println("Wi-Fi disconnected. Reconnecting...");
-        }
         internetConnected = false;
+        if (wifiMulti.run() == WL_CONNECTED) {
+             Serial.println("Wi-Fi reconnected");
+             internetConnected = true;
+        }
     }
 
     // MQTT
