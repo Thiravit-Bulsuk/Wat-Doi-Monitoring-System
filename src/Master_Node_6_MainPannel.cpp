@@ -303,6 +303,10 @@ void receiveData() {
                 if (nodeID == 1) {
                     waterLevelJD = waterLevel; // Store JD water level
                     lastReceivedJD = millis(); // Update last received time
+                    if (notification12Sent) {
+                        sendLineMessage("DataNode แท็งค์เจดีย์ กลับมาทำงานปกติแล้ว");
+                    }
+                    notification12Sent = false; // Reset Comm Error flag for JD
                     // Debounce / require LOW_THRESHOLD consecutive low readings
                     if (waterLevel < 50) {
                         lowCountJD++;
@@ -320,6 +324,10 @@ void receiveData() {
                 } else if (nodeID == 2) {
                     waterLevelPhraNon = waterLevel; // Store PhraNon water level
                     lastReceivedPhraNon = millis(); // Update last received time
+                    if (notification22Sent) {
+                        sendLineMessage("DataNode แท็งค์พระนอน กลับมาทำงานปกติแล้ว");
+                    }
+                    notification22Sent = false; // Reset Comm Error flag for PhraNon
                     if (waterLevel < 50) {
                         lowCountPhraNon++;
                         if (lowCountPhraNon >= LOW_THRESHOLD && !notification2Sent) {
@@ -335,6 +343,10 @@ void receiveData() {
                 } else if (nodeID == 3) {
                     waterLevelThamYai = waterLevel; // Store ThamYai water level
                     lastReceivedThamYai = millis(); // Update last received time
+                    if (notification32Sent) {
+                        sendLineMessage("DataNode แท็งค์ถ้ำใหญ่ กลับมาทำงานปกติแล้ว");
+                    }
+                    notification32Sent = false; // Reset Comm Error flag for ThamYai
                     if (waterLevel < 50) {
                         lowCountThamYai++;
                         if (lowCountThamYai >= LOW_THRESHOLD && !notification3Sent) {
@@ -350,6 +362,10 @@ void receiveData() {
                 } else if (nodeID == 4) {
                     waterLevelRongPui = waterLevel; // Store RongPui water level
                     lastReceivedRongPui = millis(); // Update last received time
+                    if (notification42Sent) {
+                        sendLineMessage("DataNode แท็งค์โรงปุ๋ย กลับมาทำงานปกติแล้ว");
+                    }
+                    notification42Sent = false; // Reset Comm Error flag for RongPui
                     if (waterLevel < 50) {
                         lowCountRongPui++;
                         if (lowCountRongPui >= LOW_THRESHOLD && !notification4Sent) {
@@ -366,6 +382,10 @@ void receiveData() {
               } else if (messageType == 2 && nodeID == 7) {
                 spdStatus = (int)message;
                 lastReceivedNongPog = millis(); // Update last received time
+                if (notification52Sent) {
+                    sendLineMessage("DataNode หนองพอก กลับมาทำงานปกติแล้ว");
+                }
+                notification52Sent = false; // Reset Comm Error flag for SPD
                 if (spdStatus == 1 && !notification5Sent) {
                     sendLineMessage("SPD หมดสภาพแล้ว ตรวจสอบด่วน!!!");
                     Serial.print("Notification Sent SPD");
