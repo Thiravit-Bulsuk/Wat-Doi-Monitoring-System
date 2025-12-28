@@ -37,11 +37,9 @@ void callback(char* topic, byte* payload, unsigned int length);
 void publishMessage(const char* topic, String payload , boolean retained);
 void sendMQTTData();
 void MainTask(void *parameter);
-void MqttTimerTask(void *parameter);
 
 // Task handles
 TaskHandle_t TaskMain;
-TaskHandle_t TaskMqttTimer;
 TaskHandle_t TaskResetTimer; // Task Handle สำหรับรีเซ็ตบอร์ด
 TaskHandle_t TaskDisplay;
 
@@ -85,11 +83,12 @@ const char* sensor2_topic = "PhraNon";
 const char* sensor3_topic = "ThamYai";
 const char* sensor4_topic = "RongPui";  // New Node RongPui
 const char* sensor5_topic = "NongPog";      // SPD topic
+const char* sensor6_topic = "Plastic"; // New Node Plastic
 const char* message_topic = "message_topic";
 
 const unsigned long mqttSendInterval = 600000;
 // Flag to track when new data is received
-bool newDataReceived = false;
+volatile bool newDataReceived = false;
 
 static const char *root_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -167,17 +166,20 @@ bool notification2Sent = false;
 bool notification3Sent = false;
 bool notification4Sent = false;
 bool notification5Sent = false;
+bool notification6Sent = false;
 
 bool notification12Sent = false;
 bool notification22Sent = false;
 bool notification32Sent = false;
 bool notification42Sent = false;
 bool notification52Sent = false; 
+bool notification62Sent = false;
 
 int waterLevelJD = 0;
 int waterLevelPhraNon = 0;
 int waterLevelThamYai = 0;
 int waterLevelRongPui = 0;  // Water level for RongPui
+int waterLevelPlastic = 0;  // Water level for Plastic Tank
 int spdStatus = 0;          // 0 for Good, 1 for Broken
 
 // เพิ่มตัวนับสำหรับป้องกัน false trigger (debounce แบบซอฟต์แวร์)
@@ -185,6 +187,7 @@ int lowCountJD = 0;
 int lowCountPhraNon = 0;
 int lowCountThamYai = 0;
 int lowCountRongPui = 0;
+int lowCountPlastic = 0;
 
 const int LOW_THRESHOLD = 3; // ต้องต่ำติดกันกี่ครั้งถึงจะแจ้งเตือน
 
@@ -194,6 +197,7 @@ unsigned long lastReceivedJD = 0;
 unsigned long lastReceivedPhraNon = 0;
 unsigned long lastReceivedThamYai = 0;
 unsigned long lastReceivedRongPui = 0;  // Last received time for RongPui
+unsigned long lastReceivedPlastic = 0;
 unsigned long lastReceivedNongPog = 0;
 const unsigned long commTimeout = 1500000; // 25 minutes in milliseconds
 
@@ -380,6 +384,25 @@ void receiveData() {
                     } else {
                         lowCountRongPui = 0;
                     }
+                } else if (nodeID == 8) {
+                    waterLevelPlastic = waterLevel; // Store Plastic water level
+                    lastReceivedPlastic = millis(); // Update last received time
+                    if (notification62Sent) {
+                        sendLineMessage("DataNode แท็งค์พลาสติก กลับมาทำงานปกติแล้ว");
+                    }
+                    notification62Sent = false; // Reset Comm Error flag for Plastic
+                    if (waterLevel < 10) {
+                        lowCountPlastic++;
+                        if (lowCountPlastic >= LOW_THRESHOLD && !notification6Sent) {
+                            sendLineMessage("แท็งค์พลาสติกน้ำเกือบหมดแล้ว!!!");
+                            Serial.println("Notification Sent Plastic");
+                            // No relay activation for Plastic tank
+                            notification6Sent = true;
+                            lowCountPlastic = 0;
+                        }
+                    } else {
+                        lowCountPlastic = 0;
+                    }
                 }
               } else if (messageType == 2 && nodeID == 7) {
                 spdStatus = (int)message;
@@ -434,12 +457,14 @@ void resetNotification() {
     notification3Sent = false;
     notification4Sent = false;  
     notification5Sent = false;  
+    notification6Sent = false;
 
     notification12Sent = false;
     notification22Sent = false;
     notification32Sent = false;
     notification42Sent = false;  
     notification52Sent = false;  
+    notification62Sent = false;
 
     digitalWrite(RELAY_PIN_1, HIGH);
     digitalWrite(RELAY_PIN_2, HIGH);
@@ -504,8 +529,12 @@ void CeckCommError() {
       notification32Sent = true;
     }
   if (currentMillis - lastReceivedRongPui >= commTimeout && !notification42Sent) {
-      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode โรงปุ๋ย!");
+      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode แท็งค์โรงปุ๋ย!");
       notification42Sent = true;
+    }
+  if (currentMillis - lastReceivedPlastic >= commTimeout && !notification62Sent) {
+      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode แท็งค์พลาสติก!");
+      notification62Sent = true;
     }
   if (currentMillis - lastReceivedNongPog >= commTimeout && !notification52Sent) {
       sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode หนองพอก!");
@@ -540,9 +569,9 @@ void DisplayTimerTask(void *pvParameters) {
                 display.display();
                 break;
 
-            case 4:
-                if (notification32Sent) displayData("ThamYai", "CommError");
-                else displayData("ThamYai", String(waterLevelThamYai) + " %");
+            case 4: // Plastic Tank
+                if (notification62Sent) displayData("Plastic", "CommError");
+                else displayData("Plastic", String(waterLevelPlastic) + " %");
                 break;
 
             case 5:
@@ -551,8 +580,8 @@ void DisplayTimerTask(void *pvParameters) {
                 break;
 
             case 6:
-                if (notification42Sent) displayData("RongPui", "CommError");
-                else displayData("RongPui", String(waterLevelRongPui) + " %");
+                if (notification32Sent) displayData("ThamYai", "CommError");
+                else displayData("ThamYai", String(waterLevelThamYai) + " %");
                 break;
 
             case 7:
@@ -561,8 +590,8 @@ void DisplayTimerTask(void *pvParameters) {
                 break;
 
             case 8:
-                if (notification52Sent) displayData("SPD", "CommError");
-                else displaySPDStatus();
+                if (notification42Sent) displayData("RongPui", "CommError");
+                else displayData("RongPui", String(waterLevelRongPui) + " %");
                 break;
 
             case 9:
@@ -570,18 +599,28 @@ void DisplayTimerTask(void *pvParameters) {
                 display.display();
                 break;
 
-            case 10:
-                displayData("Internet", "Error");
+            case 10: // SPD
+                if (notification52Sent) displayData("SPD", "CommError");
+                else displaySPDStatus();
                 break;
 
             case 11:
                 display.clear();
                 display.display();
                 break;
+
+            case 12: // Internet Error
+                displayData("Internet", "Error");
+                break;
+
+            case 13:
+                display.clear();
+                display.display();
+                break;
         }
 
         // คำนวณจำนวน state รวมพักหน้าจอ
-        int maxState = internetConnected ? 10 : 12;
+        int maxState = internetConnected ? 12 : 14;
 
         // รอเวลาตามประเภท state
         TickType_t delayTime = (displayState % 2 == 0) ? displayInterval : pauseInterval;
@@ -656,6 +695,7 @@ void sendMQTTData() {
         publishMessage(sensor2_topic, String(waterLevelPhraNon), true);
         publishMessage(sensor3_topic, String(waterLevelThamYai), true);
         publishMessage(sensor4_topic, String(waterLevelRongPui), true);
+        publishMessage(sensor6_topic, String(waterLevelPlastic), true);
         publishMessage(sensor5_topic, String(spdStatus), true);
 
         // Reset the newDataReceived flag
@@ -710,6 +750,7 @@ void setup() {
     waterLevelPhraNon = 0;
     waterLevelThamYai = 0;
     waterLevelRongPui = 0;
+    waterLevelPlastic = 0;
     spdStatus = 0;
 
     // เรียก resetNotification() เพื่อล้างค่าทั้งหมด
@@ -743,14 +784,13 @@ void setup() {
     lastReceivedPhraNon = millis();
     lastReceivedThamYai = millis();
     lastReceivedRongPui = millis();
+    lastReceivedPlastic = millis();
     lastReceivedNongPog = millis();
 
     // Set up the MQTT Timer to call `sendMQTTData` every 10 minutes
     mqttTimer.setInterval(mqttSendInterval, sendMQTTData);
     // Create tasks
     xTaskCreate(MainTask, "MainTask", 10000, NULL, 1, &TaskMain);
-    // Create MQTT Timer Task
-    xTaskCreate(MqttTimerTask, "MqttTimerTask", 10000, NULL, 1, &TaskMqttTimer);
     xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
 
     // สร้าง Task สำหรับรีเซ็ตอัตโนมัติ
@@ -802,19 +842,10 @@ void MainTask(void *parameter) {
     if (internetConnected) {
         if (!client.connected()) reconnect();
         client.loop();
+        mqttTimer.run(); // ย้ายการทำงานของ Timer มาไว้ใน MainTask เพื่อป้องกัน Race Condition
     }
     vTaskDelay(100 / portTICK_PERIOD_MS);  // ตรวจทุก 100ms
   }
-}
-
-// Task to run the MQTT Timer
-void MqttTimerTask(void *parameter) {
-    while (true) {
-        mqttTimer.run(); // Call mqttTimer.run() to manage the scheduled tasks
-
-        // Sleep the task for a short time to prevent high CPU usage
-        vTaskDelay(60000 / portTICK_PERIOD_MS); // Run the timer every 1 minute
-    }
 }
 
 void loop() {
