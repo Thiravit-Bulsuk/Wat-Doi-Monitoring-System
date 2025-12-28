@@ -138,7 +138,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #define RELAY_PIN_3 5
 #define RELAY_PIN_4 4
 
-#define RESET_BUTTON_PIN 48
+#define RESET_BUTTON_PIN 26
 #define LONG_PRESS_DURATION 2000  // กำหนดเวลาการกดค้าง (2 วินาที)
 
 WiFiMulti wifiMulti;
@@ -497,7 +497,7 @@ void resetNotification() {
     display.display();
 
     // หน่วงเวลาเพื่อให้ข้อความแสดงผลค้างไว้
-    delay(5000);
+    vTaskDelay(5000 / portTICK_PERIOD_MS); // ใช้ vTaskDelay เพื่อให้ Task อื่นยังทำงานได้บ้าง
 }
 
 void VextON(void) {
@@ -651,27 +651,22 @@ void DisplayTimerTask(void *pvParameters) {
 }
 
 void reconnect() {
-// Loop until we’re reconnected
-while (!client.connected()) {
-Serial.print( "Attempting MQTT connection..." );
-String clientId = "ESP32Client-"; 
-clientId += String(WiFi.macAddress()); // Use MAC Address for stable Client ID
-// Attempt to connect
-if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
-Serial.println("connected");
-
-  client.subscribe("reset_notification");
-  client.subscribe("reset_system");
-  
-     // subscribe the topics here
-  //client.subscribe(command2_topic);   // subscribe the topics here
-} else {
-  Serial.print("failed, rc=");
-  Serial.print(client.state());
-  Serial.println(" try again in 5 seconds");   // Wait 5 seconds before retrying
-  delay(5000);
-}
-}
+    // ลบ Loop while ออก เพื่อไม่ให้บล็อกการทำงานของปุ่มกด
+    if (!client.connected()) {
+        Serial.print("Attempting MQTT connection...");
+        String clientId = "ESP32Client-";
+        clientId += String(WiFi.macAddress()); // Use MAC Address for stable Client ID
+        
+        if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
+            Serial.println("connected");
+            client.subscribe("reset_notification");
+            client.subscribe("reset_system");
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(client.state());
+            Serial.println(" try again later");
+        }
+    }
 }
 
 //=======================================
@@ -821,6 +816,7 @@ void setup() {
 void MainTask(void *parameter) {
 
   static unsigned long lastInternetCheck = 0;
+  static unsigned long lastReconnectAttempt = 0; // ตัวแปรจับเวลาสำหรับ Reconnect
   
   while (true) {
     // ตรวจสอบว่าปุ่มถูกกดและค้างไว้นานกว่า LONG_PRESS_DURATION หรือไม่
@@ -866,9 +862,16 @@ void MainTask(void *parameter) {
 
     // MQTT
     if (internetConnected) {
-        if (!client.connected()) reconnect();
-        client.loop();
-        mqttTimer.run(); // ย้ายการทำงานของ Timer มาไว้ใน MainTask เพื่อป้องกัน Race Condition
+        if (!client.connected()) {
+            // ลองเชื่อมต่อใหม่ทุกๆ 5 วินาที (แบบไม่บล็อกปุ่ม)
+            if (millis() - lastReconnectAttempt > 5000) {
+                lastReconnectAttempt = millis();
+                reconnect();
+            }
+        } else {
+            client.loop();
+            mqttTimer.run();
+        }
     }
     vTaskDelay(100 / portTICK_PERIOD_MS);  // ตรวจทุก 100ms
   }
