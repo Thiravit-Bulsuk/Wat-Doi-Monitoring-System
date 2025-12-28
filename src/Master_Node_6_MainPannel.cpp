@@ -30,12 +30,13 @@ void VextON(void);
 void VextOFF(void);
 void displayData(String tankName, String message);
 void displaySPDStatus();
-void CeckCommError();
+void CheckCommError();
 void DisplayTimerTask(void *pvParameters);
 void reconnect();
 void callback(char* topic, byte* payload, unsigned int length);
 void publishMessage(const char* topic, String payload , boolean retained);
 void sendMQTTData();
+bool checkInternetConnection();
 void MainTask(void *parameter);
 
 // Task handles
@@ -205,8 +206,24 @@ volatile bool buttonPressed = false;     // สถานะว่าปุ่ม
 volatile unsigned long buttonPressTime = 0;  // เวลาที่ปุ่มถูกกด
 bool resetTriggered = false;            // ตรวจสอบการทำงานของรีเซ็ต
 
+// ฟังก์ชันเช็คว่าออกเน็ตได้จริงหรือไม่ โดยการลอง Connect ไปที่ Google DNS (8.8.8.8)
+bool checkInternetConnection() {
+    WiFiClient testClient; // เปลี่ยนชื่อตัวแปรเพื่อไม่ให้สับสนกับ client ของ MQTT
+    // ลองเชื่อมต่อ port 53 (DNS) ของ Google
+    if (testClient.connect("8.8.8.8", 53)) {
+        testClient.stop();
+        return true;
+    }
+    return false;
+}
+
 // ==== ฟังก์ชันส่งข้อความไปที่ LINE ====
 void sendLineMessage(String message) {
+    if (!internetConnected) {
+        Serial.println("No Internet. Skipping LINE message.");
+        return;
+    }
+
     WiFiClientSecure client;
     client.setInsecure(); // ข้ามการตรวจสอบใบรับรอง SSL
 
@@ -513,7 +530,7 @@ void displaySPDStatus() {
     display.display();
 }
 
-void CeckCommError() {
+void CheckCommError() {
   unsigned long currentMillis = millis();  // อัปเดต currentMillis ที่นี่
 
   if (currentMillis - lastReceivedJD >= commTimeout && !notification12Sent) {
@@ -802,6 +819,8 @@ void setup() {
 
 // Task for main logic
 void MainTask(void *parameter) {
+
+  static unsigned long lastInternetCheck = 0;
   
   while (true) {
     // ตรวจสอบว่าปุ่มถูกกดและค้างไว้นานกว่า LONG_PRESS_DURATION หรือไม่
@@ -822,19 +841,26 @@ void MainTask(void *parameter) {
         resetTriggered = false;  // รีเซ็ตสถานะการทำงานของรีเซ็ต
     }
 
-    CeckCommError();
+    CheckCommError();
 
     // ตรวจสอบสถานะ WiFi ก่อน ถ้าหลุดค่อยเรียก wifiMulti.run()
+    // ตรวจสอบสถานะ WiFi และ Internet จริงๆ
     if (WiFi.status() == WL_CONNECTED) {
-        if (!internetConnected) {
-            Serial.println("Wi-Fi reconnected");
-            internetConnected = true;
+        // ถ้าต่อ WiFi อยู่ ให้เช็คเน็ตทุกๆ 60 วินาที (หรือทุก 5 วินาทีถ้าสถานะเดิมคือหลุด)
+        unsigned long checkInterval = internetConnected ? 60000 : 5000;
+        if (millis() - lastInternetCheck >= checkInterval) {
+            lastInternetCheck = millis();
+            bool hasInternet = checkInternetConnection();
+            if (hasInternet != internetConnected) {
+                internetConnected = hasInternet;
+                Serial.println(internetConnected ? "Internet Access: OK" : "Internet Access: Lost");
+            }
         }
     } else {
         internetConnected = false;
         if (wifiMulti.run() == WL_CONNECTED) {
              Serial.println("Wi-Fi reconnected");
-             internetConnected = true;
+             lastInternetCheck = 0; // บังคับให้เช็คเน็ตทันทีในรอบถัดไป
         }
     }
 
