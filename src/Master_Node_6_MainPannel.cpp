@@ -85,11 +85,13 @@ const char* sensor3_topic = "ThamYai";
 const char* sensor4_topic = "RongPui";  // New Node RongPui
 const char* sensor5_topic = "NongPog";      // SPD topic
 const char* sensor6_topic = "Plastic"; // New Node Plastic
-const char* message_topic = "message_topic";
+const char* message_topic = "message";
 
 const unsigned long mqttSendInterval = 600000;
 // Flag to track when new data is received
 volatile bool newDataReceived = false;
+volatile bool mqttResetNotification = false;
+volatile bool mqttResetSystem = false;
 
 static const char *root_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -224,10 +226,10 @@ void sendLineMessage(String message) {
         return;
     }
 
-    WiFiClientSecure client;
-    client.setInsecure(); // ข้ามการตรวจสอบใบรับรอง SSL
+    WiFiClientSecure lineClient;
+    lineClient.setInsecure(); // ข้ามการตรวจสอบใบรับรอง SSL
 
-    if (!client.connect("api.line.me", 443)) {
+    if (!lineClient.connect("api.line.me", 443)) {
         Serial.println("LINE API Connection Failed");
         return;
     }
@@ -247,12 +249,18 @@ void sendLineMessage(String message) {
     request += "\r\n";
     request += payload;
 
-    client.print(request);
+    lineClient.print(request);
 
     Serial.println("LINE Message Sent: " + message);
     publishMessage(message_topic, message, true);
-    delay(200);
-    client.stop();
+    
+    // วนลูปเพื่อให้ MQTT Client ทำงานและส่งข้อความออกไปจริงๆ ก่อนที่จะทำอย่างอื่นต่อ
+    unsigned long start = millis();
+    while (millis() - start < 1000) {
+        client.loop();
+        delay(10);
+    }
+    lineClient.stop();
 }
 
 
@@ -682,21 +690,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
     if (strcmp(topic, "reset_notification") == 0) {
         if (incommingMessage.equals("1")) {
-            resetNotification();
+            mqttResetNotification = true;
         }
     }
 
     if (strcmp(topic, "reset_system") == 0) {
         if (incommingMessage.equals("1")) {
-            resetSystem();
+            mqttResetSystem = true;
         }
     }
 }
 
 //======================================= publising as string
 void publishMessage(const char* topic, String payload , boolean retained) {
-if (client.publish(topic, payload.c_str(), true))
-Serial.println("Message publised ["+String(topic)+"]: "+payload);
+    if (client.publish(topic, payload.c_str(), retained)) {
+        Serial.println("Message publised ["+String(topic)+"]: "+payload);
+    }
 }
 
 // Function to send MQTT data every 10 minutes
@@ -871,6 +880,30 @@ void MainTask(void *parameter) {
         } else {
             client.loop();
             mqttTimer.run();
+
+            if (mqttResetNotification) {
+                publishMessage(message_topic, "Reset Notification via MQTT", false);
+                mqttResetNotification = false;
+                // Give time for message to be sent
+                unsigned long start = millis();
+                while (millis() - start < 1000) {
+                    client.loop();
+                    delay(10);
+                }
+                resetNotification();
+            }
+
+            if (mqttResetSystem) {
+                publishMessage(message_topic, "System Reset via MQTT", false);
+                mqttResetSystem = false;
+                // Give time for message to be sent
+                unsigned long start = millis();
+                while (millis() - start < 2000) {
+                    client.loop();
+                    delay(10);
+                }
+                resetSystem();
+            }
         }
     }
     vTaskDelay(100 / portTICK_PERIOD_MS);  // ตรวจทุก 100ms
