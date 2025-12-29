@@ -190,7 +190,7 @@ int lowCountThamYai = 0;
 int lowCountRongPui = 0;
 int lowCountPlastic = 0;
 
-const int LOW_THRESHOLD = 3; // ต้องต่ำติดกันกี่ครั้งถึงจะแจ้งเตือน
+const int LOW_THRESHOLD = 5; // ต้องต่ำติดกันกี่ครั้งถึงจะแจ้งเตือน
 
 
 // Variables to track last received time
