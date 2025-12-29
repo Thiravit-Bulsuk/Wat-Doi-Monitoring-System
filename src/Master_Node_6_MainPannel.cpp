@@ -86,12 +86,17 @@ const char* sensor4_topic = "RongPui";  // New Node RongPui
 const char* sensor5_topic = "NongPog";      // SPD topic
 const char* sensor6_topic = "Plastic"; // New Node Plastic
 const char* message_topic = "message";
+const char* notification_control_topic = "notification_control";
+const char* notification_status_topic = "notification_status";
 
 const unsigned long mqttSendInterval = 600000;
 // Flag to track when new data is received
 volatile bool newDataReceived = false;
 volatile bool mqttResetNotification = false;
 volatile bool mqttResetSystem = false;
+volatile bool notificationsEnabled = true;
+volatile bool mqttDisableNotifications = false;
+volatile bool mqttEnableNotifications = false;
 
 static const char *root_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -221,6 +226,11 @@ bool checkInternetConnection() {
 
 // ==== ฟังก์ชันส่งข้อความไปที่ LINE ====
 void sendLineMessage(String message) {
+    if (!notificationsEnabled) {
+        Serial.println("Notifications disabled. Skipping LINE message.");
+        return;
+    }
+
     if (!internetConnected) {
         Serial.println("No Internet. Skipping LINE message.");
         return;
@@ -457,6 +467,11 @@ void receiveData() {
 
 // Function to activate relay based on tank ID
 void activateRelay(uint8_t nodeID) {
+    if (!notificationsEnabled) {
+        Serial.println("Notifications disabled. Relay activation skipped.");
+        return;
+    }
+
     switch (nodeID) {
         case 1:
             digitalWrite(RELAY_PIN_1, LOW);  // JD
@@ -669,6 +684,7 @@ void reconnect() {
             Serial.println("connected");
             client.subscribe("reset_notification");
             client.subscribe("reset_system");
+            client.subscribe(notification_control_topic);
         } else {
             Serial.print("failed, rc=");
             Serial.print(client.state());
@@ -699,6 +715,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
             mqttResetSystem = true;
         }
     }
+
+    if (strcmp(topic, notification_control_topic) == 0) {
+        if (incommingMessage.equals("0")) {
+            mqttDisableNotifications = true;
+        } else if (incommingMessage.equals("1")) {
+            mqttEnableNotifications = true;
+        }
+    }
 }
 
 //======================================= publising as string
@@ -710,6 +734,8 @@ void publishMessage(const char* topic, String payload , boolean retained) {
 
 // Function to send MQTT data every 10 minutes
 void sendMQTTData() {
+    publishMessage(notification_status_topic, notificationsEnabled ? "1" : "0", true);
+
     if (newDataReceived) {
         // Publish the latest water levels and SPD status to MQTT topics
         publishMessage(sensor1_topic, String(waterLevelJD), true);
@@ -903,6 +929,37 @@ void MainTask(void *parameter) {
                     delay(10);
                 }
                 resetSystem();
+            }
+
+            if (mqttDisableNotifications) {
+                notificationsEnabled = false;
+                
+                // Turn off all relays immediately
+                digitalWrite(RELAY_PIN_1, HIGH);
+                digitalWrite(RELAY_PIN_2, HIGH);
+                digitalWrite(RELAY_PIN_3, HIGH);
+                digitalWrite(RELAY_PIN_4, HIGH);
+
+                Serial.println("Notifications Disabled via MQTT");
+                publishMessage(message_topic, "notification is set to off", false);
+                mqttDisableNotifications = false;
+                unsigned long start = millis();
+                while (millis() - start < 1000) {
+                    client.loop();
+                    delay(10);
+                }
+            }
+
+            if (mqttEnableNotifications) {
+                notificationsEnabled = true;
+                Serial.println("Notifications Enabled via MQTT");
+                publishMessage(message_topic, "notification is set to on", false);
+                mqttEnableNotifications = false;
+                unsigned long start = millis();
+                while (millis() - start < 1000) {
+                    client.loop();
+                    delay(10);
+                }
             }
         }
     }
