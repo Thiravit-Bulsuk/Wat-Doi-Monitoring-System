@@ -5,6 +5,14 @@
 // disable auto reset function for testing purpose
 //  ลดความสว่างหน้าจอเหลือ 150
 
+/*
+
+เพิ่ม Topic ชื่อ request_data
+เมื่อคุณกดปุ่มบนมือถือให้ส่งค่า 1 มาที่ Topic นี้
+Master Node จะตรวจจับได้และทำการ Publish ข้อมูลเซ็นเซอร์ทุกตัวออกมาทันทีครับ  
+
+*/
+
 
 #include <SPI.h>  
 #include <SimpleTimer.h>
@@ -88,6 +96,7 @@ const char* sensor6_topic = "Plastic"; // New Node Plastic
 const char* message_topic = "message";
 const char* notification_control_topic = "notification_control";
 const char* notification_status_topic = "notification_status";
+const char* request_data_topic = "request_data";
 
 const unsigned long mqttSendInterval = 600000;
 // Flag to track when new data is received
@@ -97,6 +106,7 @@ volatile bool mqttResetSystem = false;
 volatile bool notificationsEnabled = true;
 volatile bool mqttDisableNotifications = false;
 volatile bool mqttEnableNotifications = false;
+volatile bool mqttRequestData = false;
 
 static const char *root_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -685,6 +695,7 @@ void reconnect() {
             client.subscribe("reset_notification");
             client.subscribe("reset_system");
             client.subscribe(notification_control_topic);
+            client.subscribe(request_data_topic);
         } else {
             Serial.print("failed, rc=");
             Serial.print(client.state());
@@ -721,6 +732,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
             mqttDisableNotifications = true;
         } else if (incommingMessage.equals("1")) {
             mqttEnableNotifications = true;
+        }
+    }
+
+    if (strcmp(topic, request_data_topic) == 0) {
+        if (incommingMessage.equals("1")) {
+            mqttRequestData = true;
         }
     }
 }
@@ -957,6 +974,23 @@ void MainTask(void *parameter) {
                 publishMessage(message_topic, "notification is set to on", true);
                 publishMessage(notification_status_topic, notificationsEnabled ? "1" : "0", true);
                 mqttEnableNotifications = false;
+                unsigned long start = millis();
+                while (millis() - start < 1000) {
+                    client.loop();
+                    delay(10);
+                }
+            }
+
+            if (mqttRequestData) {
+                Serial.println("Manual Data Request via MQTT");
+                publishMessage(sensor1_topic, String(waterLevelJD), true);
+                publishMessage(sensor2_topic, String(waterLevelPhraNon), true);
+                publishMessage(sensor3_topic, String(waterLevelThamYai), true);
+                publishMessage(sensor4_topic, String(waterLevelRongPui), true);
+                publishMessage(sensor6_topic, String(waterLevelPlastic), true);
+                publishMessage(sensor5_topic, String(spdStatus), true);
+                
+                mqttRequestData = false;
                 unsigned long start = millis();
                 while (millis() - start < 1000) {
                     client.loop();

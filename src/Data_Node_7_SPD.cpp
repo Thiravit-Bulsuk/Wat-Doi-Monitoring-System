@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <SPI.h>  
+#include <Wire.h>
+#include <HT_SSD1306Wire.h>
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
 #include <esp_sleep.h>
@@ -31,6 +33,49 @@ const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 #define REPEATER_NODE 5
 
 SX126XLT LT;
+
+// Initialize OLED Display and Button
+static SSD1306Wire display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
+#define PRG_BUTTON 0
+
+void VextON() {
+  pinMode(Vext, OUTPUT);
+  digitalWrite(Vext, LOW); // Active LOW เพื่อเปิดไฟ
+}
+
+void VextOFF() {
+  pinMode(Vext, OUTPUT);
+  digitalWrite(Vext, HIGH); // Active LOW (HIGH = OFF)
+}
+
+// Forward declaration
+bool readSPDStatus();
+
+// Function to display status on OLED when button is pressed
+void showStatus() {
+    Serial.println("Button Pressed: Showing Status");
+    VextON();
+    delay(50);
+    display.init();
+
+    display.displayOn();
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.setFont(ArialMT_Plain_16);
+    display.drawString(64, 0, "Node 7: SPD");
+    
+    bool failed = readSPDStatus();
+    display.setFont(ArialMT_Plain_24);
+    if (failed) {
+        display.drawString(64, 25, "FAILED!");
+    } else {
+        display.drawString(64, 25, "Working");
+    }
+
+    display.display();
+    delay(3000); // Show for 3 seconds
+    display.displayOff();
+}
 
 // Function to initialize LoRa module
 bool initLoRa() {
@@ -89,37 +134,52 @@ void setup() {
     SPI.begin();
     delay(500);
 
+    pinMode(PRG_BUTTON, INPUT_PULLUP);
     pinMode(SPD_PIN, INPUT_PULLUP);  // Use internal pull-up resistor
+
+    // ตรวจสอบว่าตื่นเพราะกดปุ่มหรือไม่
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+        showStatus(); // แสดงสถานะแล้วทำงานต่อ
+    }
 
     if (!initLoRa()) {
         Serial.println("Critical Error: LoRa initialization failed. System halting.");
-        while (1);  // Stop if LoRa initialization fails
+        // ถ้า LoRa พัง ให้หลับไปก่อนแล้วค่อยตื่นมาลองใหม่
+    } else {
+        LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
+        
+        // Random delay to prevent communication collisions (เฉพาะตอนทำงานปกติ ไม่ใช่ตอนกดปุ่มดู)
+        if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT0) {
+            int randomDelay = random(1000, 30000);  
+            delay(randomDelay);
+        }
+
+        bool failed = readSPDStatus();
+        uint8_t status = failed ? 1 : 0;  // Convert bool to uint8_t for transmission
+        
+        // Send SPD status twice (to ensure successful transmission)
+        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 7, status);  
+        delay(random(1000, 5000));  
+        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 7, status);  
     }
 
-    LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
-    
-    // Random delay to prevent communication collisions
-    int randomDelay = random(1000, 30000);  
-    delay(randomDelay);
-}
-
-void loop() {
-    bool failed = readSPDStatus();
-    uint8_t status = failed ? 1 : 0;  // Convert bool to uint8_t for transmission
-    
-    // Send SPD status twice (to ensure successful transmission)
-    sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 7, status);  
-    delay(random(1000, 10000));  
-    sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 7, status);  
+    VextOFF();
     
     // Put LoRa module to sleep to save power
     LT.setSleep(CONFIGURATION_RETENTION);   
     Serial.println("LoRa Sleeping zzzzz....");
     
     // Put ESP32 into deep sleep for 5 minutes (300000 ms)
-    esp_sleep_enable_timer_wakeup(300000000);  // Wake up after 5 minutes
+    uint64_t sleepTime = 300000ULL * 1000ULL; // 5 นาที
+    sleepTime += random(1000, 30000) * 1000ULL; // Random Jitter
+    esp_sleep_enable_timer_wakeup(sleepTime);
+    
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0); // ตื่นด้วยปุ่มกด
+
     Serial.println("ESP32 Sleeping zzzzz....");
     
     Serial.flush();
     esp_deep_sleep_start();  // Enter deep sleep
 }
+
+void loop() {}

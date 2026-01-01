@@ -3,6 +3,7 @@
 #include <HT_SSD1306Wire.h>
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
+#include <esp_sleep.h>
 #include "Arduino.h"
 
 // Define LoRa settings
@@ -52,12 +53,12 @@ void VextOFF() {
 }
 
 // ตัวแปรสำหรับ Logic ใหม่ (Layer 2: Sanity Check)
-float lastValidDistance = TANK_FULL_CM; // เก็บค่าระยะทางที่ถูกต้องล่าสุด (เริ่มที่น้ำเต็ม)
-bool isTankEmpty = false;       // สถานะว่าน้ำหมดหรือไม่
-int refillConfirmationCount = 0; // ตัวนับเพื่อยืนยันเมื่อน้ำกลับมา
+RTC_DATA_ATTR float lastValidDistance = TANK_FULL_CM; // เก็บค่าระยะทางที่ถูกต้องล่าสุด (เริ่มที่น้ำเต็ม)
+RTC_DATA_ATTR bool isTankEmpty = false;       // สถานะว่าน้ำหมดหรือไม่
+RTC_DATA_ATTR int refillConfirmationCount = 0; // ตัวนับเพื่อยืนยันเมื่อน้ำกลับมา
 const int REFILL_THRESHOLD = 3;  // ต้องอ่านค่าได้กี่ครั้งถึงจะเชื่อว่าน้ำมาจริง
 
-uint8_t lastPercentage = 100; // เก็บค่าเปอร์เซ็นต์ล่าสุด
+RTC_DATA_ATTR uint8_t lastPercentage = 100; // เก็บค่าเปอร์เซ็นต์ล่าสุด
 
 // Forward declaration
 float readDistance();
@@ -248,37 +249,20 @@ void setup() {
     Serial.begin(115200);
     Serial.println("Data Node 1 (JD) Initializing...");
 
-    VextON(); // เปิดไฟเลี้ยงหน้าจอ
-    delay(100);
-
     SPI.begin();
     delay(500);
 
     pinMode(TRIGGER_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
     pinMode(PRG_BUTTON, INPUT_PULLUP);
-
-    // Initialize Display
-    display.init();
-    display.clear();
-    Serial.println("Display Initialized");
-    display.displayOff(); // Turn off to save battery
-    VextOFF();
-
-    if (!initLoRa()) {
-        Serial.println("Critical Error: LoRa initialization failed. System halting.");
-        while (1);  // Stop if LoRa initialization fails
+    
+    // ตรวจสอบว่าตื่นเพราะกดปุ่มหรือไม่
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+        showStatus(); // แสดงสถานะแล้วทำงานต่อ
     }
-    LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
-    int randomDelay = random(1000, 5000);
-    Serial.print("Setup Complete. Waiting random delay: "); Serial.println(randomDelay);
-    smartDelay(randomDelay);
-}
 
-void loop() {
-    Serial.println("--- Loop Start ---");
+    // เริ่มต้นกระบวนการวัดค่า (ย้ายจาก loop มาไว้ setup)
     VextON();
-    delay(50);
     float distance = readDistance();
     
     bool shouldSendZero = false;
@@ -322,6 +306,12 @@ void loop() {
         }
     }
 
+    // เริ่มต้น LoRa เฉพาะตอนจะส่งข้อมูล
+    if (!initLoRa()) {
+        Serial.println("Critical Error: LoRa initialization failed.");
+    } else {
+        LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
+
     // Action based on Logic
     if (shouldSendZero) {
         lastPercentage = 0;
@@ -343,18 +333,26 @@ void loop() {
         Serial.println("Sending Packet 2...");
         sendData(MESSAGE_TYPE, REPEATER_NODE, 1, percentage);
     }
+    } // End LoRa block
+
     VextOFF();
-    smartDelay(2000);  
+    
+    // เตรียมตัวหลับ (Deep Sleep)
     LT.setSleep(CONFIGURATION_RETENTION);   // Preserve register settings in sleep.
     Serial.println("LoRa set to Sleep");
-    Serial.println("Sleeping zzzzz....");
+    Serial.println("Entering Deep Sleep (5 mins)...");
     Serial.flush();
 
-    smartDelay(300000);  // 5 minutes sleep
-    int randomDelay2 = random(10000, 100000);  
-    smartDelay(randomDelay2);
+    // ตั้งค่าการตื่น
+    // 1. ตื่นด้วยปุ่มกด (GPIO 0 เป็น LOW)
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0); 
     
-    Serial.println(F("Awake !"));
-    Serial.flush();
-    LT.wake();
+    // 2. ตื่นด้วยเวลา (5 นาที + สุ่มเล็กน้อยเพื่อกันชนกัน)
+    uint64_t sleepTime = 300000ULL * 1000ULL; // 5 นาที (หน่วยไมโครวินาที)
+    sleepTime += random(1000, 30000) * 1000ULL; // เพิ่ม Random Jitter 1-30 วินาที
+    esp_sleep_enable_timer_wakeup(sleepTime);
+
+    esp_deep_sleep_start(); // หลับยาว
 }
+
+void loop() {}

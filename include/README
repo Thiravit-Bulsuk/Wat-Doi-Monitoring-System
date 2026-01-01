@@ -35,3 +35,29 @@ Read more about using header files in official GCC documentation:
 * Computed Includes
 
 https://gcc.gnu.org/onlinedocs/cpp/Header-Files.html
+
+
+📡 MQTT Configuration & Topics
+⚙️ Broker Settings
+Server: aa9e03df167b40b086069a385503cf2f.s1.eu.hivemq.cloud
+Port: 8883 (Secure/TLS)
+📤 Publish Topics (Board ➔ Dashboard/App)
+หัวข้อที่ Master Node ส่งข้อมูลออกมาแสดงผล
+
+Topic	Description	Payload / Value
+JD	ระดับน้ำแท็งค์เจดีย์	0 - 100 (เปอร์เซ็นต์)
+PhraNon	ระดับน้ำแท็งค์พระนอน	0 - 100 (เปอร์เซ็นต์)
+ThamYai	ระดับน้ำแท็งค์ถ้ำใหญ่	0 - 100 (เปอร์เซ็นต์)
+RongPui	ระดับน้ำแท็งค์โรงปุ๋ย	0 - 100 (เปอร์เซ็นต์)
+Plastic	ระดับน้ำแท็งค์พลาสติก	0 - 100 (เปอร์เซ็นต์)
+NongPog	สถานะกันฟ้าผ่า (SPD)	0 = ปกติ (Working)1 = เสีย (Failed)
+notification_status	สถานะระบบแจ้งเตือน	1 = เปิด (ON)0 = ปิด (OFF)
+message	ข้อความสถานะระบบ/Log	ข้อความ String (เช่น "System Reset via MQTT", ข้อความแจ้งเตือน LINE)
+📥 Subscribe Topics (Dashboard/App ➔ Board)
+หัวข้อที่ Master Node รอรับคำสั่งจากผู้ใช้
+
+Topic	Description	Payload / Command
+request_data	ขอข้อมูลล่าสุดทันที (Manual Request)	ส่ง 1 เพื่อเรียกดูข้อมูลเซ็นเซอร์ทั้งหมดทันที
+notification_control	ควบคุมการเปิด/ปิดแจ้งเตือน	ส่ง 1 = เปิดแจ้งเตือน (Enable)ส่ง 0 = ปิดแจ้งเตือน (Disable)
+reset_notification	รีเซ็ตสถานะการแจ้งเตือนและ Relay	ส่ง 1 เพื่อเคลียร์สถานะแจ้งเตือนค้าง (Reset Flags)
+reset_system	รีสตาร์ทบอร์ด Master Node	ส่ง 1 เพื่อสั่ง Reboot (ESP.restart)

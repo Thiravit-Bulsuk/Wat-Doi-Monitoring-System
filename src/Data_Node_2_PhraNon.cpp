@@ -6,6 +6,7 @@
 #include <HT_SSD1306Wire.h>
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
+#include <esp_sleep.h>
 
 // Define LoRa settings
 #define LORA_DEVICE DEVICE_SX1262
@@ -61,13 +62,13 @@ void VextOFF() {
 }
 
 // ตัวแปรสำหรับ Logic ใหม่ (Layer 2: Sanity Check) แยกตามถัง
-float lastValidDistance1 = 25.0; // Tank 2 (เริ่มที่น้ำเต็ม)
-bool isTankEmpty1 = false;
-int refillCount1 = 0;
+RTC_DATA_ATTR float lastValidDistance1 = 25.0; // Tank 2 (เริ่มที่น้ำเต็ม)
+RTC_DATA_ATTR bool isTankEmpty1 = false;
+RTC_DATA_ATTR int refillCount1 = 0;
 
-float lastValidDistance2 = 48.0; // Tank 8 (เริ่มที่น้ำเต็ม)
-bool isTankEmpty2 = false;
-int refillCount2 = 0;
+RTC_DATA_ATTR float lastValidDistance2 = 48.0; // Tank 8 (เริ่มที่น้ำเต็ม)
+RTC_DATA_ATTR bool isTankEmpty2 = false;
+RTC_DATA_ATTR int refillCount2 = 0;
 
 const int REFILL_THRESHOLD = 3;  // ต้องอ่านค่าได้กี่ครั้งถึงจะเชื่อว่าน้ำมาจริง
 
@@ -251,9 +252,6 @@ void setup() {
     Serial.begin(115200);
     Serial.println("Data Node 2 (PhraNon) Initializing...");
 
-    VextON(); // เปิดไฟเลี้ยงหน้าจอ
-    delay(100);
-
     SPI.begin();
     delay(500);
 
@@ -263,26 +261,15 @@ void setup() {
     pinMode(TRIGGER_PIN_2, OUTPUT);
     pinMode(ECHO_PIN_2, INPUT);
     pinMode(PRG_BUTTON, INPUT_PULLUP);
-
-    // Initialize Display
-    display.init();
-    display.clear();
-    Serial.println("Display Initialized");
-    display.displayOff(); // Turn off to save battery
-    VextOFF();
-
-    if (!initLoRa()) {
-        Serial.println("Critical Error: LoRa initialization failed. System halting.");
-        while (1);  // Stop if LoRa initialization fails
+    
+    // ตรวจสอบว่าตื่นเพราะกดปุ่มหรือไม่
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+        showStatus(); // แสดงสถานะแล้วทำงานต่อ
     }
-    LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
-    int randomDelay = random(6000, 10000);  // สุ่มหน่วงเวลาระหว่าง 6 ถึง 10 วินาที
-    smartDelay(randomDelay);
-}
 
-void loop() {
     VextON();
     delay(50);
+    
     // ==========================================
     // --- Sensor 1 (Tank ID 2) Logic ---
     // ==========================================
@@ -316,19 +303,6 @@ void loop() {
         }
     }
 
-    if (shouldSendZero1) {
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, 0);
-        smartDelay(random(10000, 20000));
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, 0);
-    } else if (shouldSendValue1) {
-        uint8_t percentage1 = map(lastValidDistance1, TANK2_FULL_CM, TANK2_EMPTY_CM, 100, 0);
-        percentage1 = constrain(percentage1, 0, 100); // Ensure percentage is within valid range
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, percentage1);
-        smartDelay(random(10000, 20000));
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, percentage1);
-    }
-
-    smartDelay(2000);
 
     // ==========================================
     // --- Sensor 2 (Tank ID 8) Logic ---
@@ -363,29 +337,57 @@ void loop() {
         }
     }
 
-    if (shouldSendZero2) {
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, 0);
-        smartDelay(random(10000, 20000));
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, 0);
-    } else if (shouldSendValue2) {
-        uint8_t percentage2 = map(lastValidDistance2, TANK8_FULL_CM, TANK8_EMPTY_CM, 100, 0);
-        percentage2 = constrain(percentage2, 0, 100);
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, percentage2); // Sending with Tank ID 8
-        smartDelay(random(10000, 20000));
-        sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, percentage2); // Sending again for reliability
+    // เริ่มต้น LoRa เฉพาะตอนจะส่งข้อมูล
+    if (!initLoRa()) {
+        Serial.println("Critical Error: LoRa initialization failed.");
+    } else {
+        LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
+
+        // --- Sending Data for Sensor 1 ---
+        if (shouldSendZero1) {
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, 0);
+            smartDelay(random(10000, 20000));
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, 0);
+        } else if (shouldSendValue1) {
+            uint8_t percentage1 = map(lastValidDistance1, TANK2_FULL_CM, TANK2_EMPTY_CM, 100, 0);
+            percentage1 = constrain(percentage1, 0, 100);
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, percentage1);
+            smartDelay(random(10000, 20000));
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, percentage1);
+        }
+
+        if (shouldSendZero1 || shouldSendValue1) {
+             smartDelay(2000); // เว้นระยะนิดหน่อยถ้ามีการส่งข้อมูลชุดแรก
+        }
+
+        // --- Sending Data for Sensor 2 ---
+        if (shouldSendZero2) {
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, 0);
+            smartDelay(random(10000, 20000));
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, 0);
+        } else if (shouldSendValue2) {
+            uint8_t percentage2 = map(lastValidDistance2, TANK8_FULL_CM, TANK8_EMPTY_CM, 100, 0);
+            percentage2 = constrain(percentage2, 0, 100);
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, percentage2);
+            smartDelay(random(10000, 20000));
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, percentage2);
+        }
     }
 
     VextOFF();
-    smartDelay(2000);  
+    
+    // เตรียมตัวหลับ (Deep Sleep)
     LT.setSleep(CONFIGURATION_RETENTION);   // Preserve register settings in sleep.
-    Serial.println("Sleeping zzzzz....");
-
-    smartDelay(300000);  // 5 minutes sleep
-    
-    int randomDelay2 = random(10000, 100000);  
-    smartDelay(randomDelay2);
-    
-    Serial.println(F("Awake !"));
+    Serial.println("Entering Deep Sleep (5 mins)...");
     Serial.flush();
-    LT.wake(); 
+
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0); // ตื่นด้วยปุ่มกด
+    
+    uint64_t sleepTime = 300000ULL * 1000ULL; // 5 นาที
+    sleepTime += random(1000, 30000) * 1000ULL; // Random Jitter
+    esp_sleep_enable_timer_wakeup(sleepTime);
+
+    esp_deep_sleep_start(); // หลับยาว
 }
+
+void loop() {}

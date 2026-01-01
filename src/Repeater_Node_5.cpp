@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <Wire.h>
+#include <HT_SSD1306Wire.h>
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
 
@@ -22,6 +24,67 @@ const int8_t TXpower = 14;  // LoRa transmit power in dBm
 
 SX126XLT LT;
 
+// Initialize OLED Display and Button
+static SSD1306Wire display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
+#define PRG_BUTTON 0
+
+// Global variables for display status
+volatile bool displayActive = false;
+unsigned long displayTimeout = 0;
+String logStatus = "Waiting...";
+String logLastPacket = "-";
+String logAction = "-";
+
+void VextON() {
+  pinMode(Vext, OUTPUT);
+  digitalWrite(Vext, LOW);
+}
+
+void VextOFF() {
+  pinMode(Vext, OUTPUT);
+  digitalWrite(Vext, HIGH);
+}
+
+// Task to handle Display and Button
+void DisplayTask(void *parameter) {
+    pinMode(PRG_BUTTON, INPUT_PULLUP);
+    
+    for(;;) {
+        if (digitalRead(PRG_BUTTON) == LOW) {
+            if (!displayActive) {
+                VextON();
+                delay(50);
+                display.init();
+                display.displayOn();
+                display.setFont(ArialMT_Plain_10);
+                display.setTextAlignment(TEXT_ALIGN_LEFT);
+            }
+            displayActive = true;
+            displayTimeout = millis() + 180000; // 3 minutes
+            vTaskDelay(200 / portTICK_PERIOD_MS); // Debounce
+        }
+
+        if (displayActive) {
+            if (millis() > displayTimeout) {
+                displayActive = false;
+                display.clear();
+                display.display();
+                display.displayOff();
+                VextOFF();
+            } else {
+                display.clear();
+                display.drawString(0, 0, "Repeater Node 5 (Live)");
+                display.drawString(0, 13, "St: " + logStatus);
+                display.drawString(0, 26, "Pkt: " + logLastPacket);
+                display.drawString(0, 39, "Act: " + logAction);
+                display.drawString(0, 52, "Off in: " + String((displayTimeout - millis())/1000) + "s");
+                display.display();
+            }
+        }
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+
 // Function to initialize LoRa module
 bool initLoRa() {
     if (!LT.begin(NSS, NRESET, RFBUSY, DIO1, LORA_DEVICE)) {
@@ -38,6 +101,7 @@ void onReceive(uint8_t MasterNode, uint8_t ThisNode) {
         
     if (packetSize > 0) {
         Serial.println("Received packet");
+        logStatus = "RX " + String(packetSize) + " bytes";
 
         LT.startReadSXBuffer(0);
 
@@ -51,12 +115,15 @@ void onReceive(uint8_t MasterNode, uint8_t ThisNode) {
         Serial.print("ReceiverID: "); Serial.println(receiverID);
         Serial.print("SenderID: "); Serial.println(senderId);
         Serial.print("Message: "); Serial.println(message);
+        
+        logLastPacket = "N" + String(senderId) + " -> N" + String(receiverID) + " (T" + String(messageType) + ")";
 
         if ((messageType == 1 || messageType == 2 || messageType == 3) && receiverID == 5) {
             Serial.print("Message from Node ");
             Serial.print(senderId);
             Serial.print(": ");
             Serial.println(message);
+            logAction = "Forwarding...";
 
             delay(1000);
 
@@ -75,13 +142,17 @@ void onReceive(uint8_t MasterNode, uint8_t ThisNode) {
             uint8_t TXPacketL = LT.transmitSXBuffer(0, (len + 3), 5000, TXpower, WAIT_TX); // Send packet with TXpower
             if (TXPacketL == 0) {
               Serial.println("Error: Failed to send data");
+              logAction = "Send Failed";
             } else {
                 Serial.println("Data sent successfully");
                 Serial.println("Data forwarded to Master Node.");
+                logAction = "Forwarded OK";
                 
             }
         } else {
             Serial.println("Message does not meet criteria, ignoring.");
+            logAction = "Ignored";
+            if (displayActive) delay(500); // Keep message on screen briefly if display is on
         }
     }
 }
@@ -93,6 +164,10 @@ void setup() {
     SPI.begin();
     delay(500);
 
+    // Start Display Task
+    xTaskCreate(DisplayTask, "DisplayTask", 4096, NULL, 1, NULL);
+    VextOFF(); // Ensure display is off initially
+
     if (!initLoRa()) {
         Serial.println("LoRa initialization failed. Halting.");
         while (1); 
@@ -103,5 +178,6 @@ void setup() {
 }
 
 void loop() {
+    logStatus = "Listening...";
     onReceive(6, 5);
 }
