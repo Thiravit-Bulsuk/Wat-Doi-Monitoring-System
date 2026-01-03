@@ -958,7 +958,7 @@ void MainTask(void *parameter) {
                 digitalWrite(RELAY_PIN_4, HIGH);
 
                 Serial.println("Notifications Disabled via MQTT");
-                publishMessage(message_topic, "notification is set to off", true);
+                publishMessage(message_topic, "notification is set to off", false);
                 publishMessage(notification_status_topic, notificationsEnabled ? "1" : "0", true);
                 mqttDisableNotifications = false;
                 unsigned long start = millis();
@@ -971,7 +971,7 @@ void MainTask(void *parameter) {
             if (mqttEnableNotifications) {
                 notificationsEnabled = true;
                 Serial.println("Notifications Enabled via MQTT");
-                publishMessage(message_topic, "notification is set to on", true);
+                publishMessage(message_topic, "notification is set to on", false);
                 publishMessage(notification_status_topic, notificationsEnabled ? "1" : "0", true);
                 mqttEnableNotifications = false;
                 unsigned long start = millis();
@@ -983,6 +983,7 @@ void MainTask(void *parameter) {
 
             if (mqttRequestData) {
                 Serial.println("Manual Data Request via MQTT");
+                publishMessage(message_topic, "Manual data update sent", false);
                 publishMessage(sensor1_topic, String(waterLevelJD), true);
                 publishMessage(sensor2_topic, String(waterLevelPhraNon), true);
                 publishMessage(sensor3_topic, String(waterLevelThamYai), true);
