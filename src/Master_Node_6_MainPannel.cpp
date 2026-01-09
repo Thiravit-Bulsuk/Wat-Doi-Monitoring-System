@@ -25,6 +25,7 @@ Master Node จะตรวจจับได้และทำการ Publish
 #include <HT_SSD1306Wire.h>
 #include <Arduino.h>
 #include <ProgramLT_Definitions.h>
+#include <time.h>
 
 void sendLineMessage(String message);
 void resetSystem();
@@ -46,11 +47,13 @@ void publishMessage(const char* topic, String payload , boolean retained);
 void sendMQTTData();
 bool checkInternetConnection();
 void MainTask(void *parameter);
+void ButtonTask(void *parameter);
 
 // Task handles
 TaskHandle_t TaskMain;
 TaskHandle_t TaskResetTimer; // Task Handle สำหรับรีเซ็ตบอร์ด
 TaskHandle_t TaskDisplay;
+TaskHandle_t TaskButton;
 
 // Timer สำหรับการอัปเดตหน้าจอ และ MQTT
 SimpleTimer displayTimer;
@@ -226,6 +229,7 @@ bool resetTriggered = false;            // ตรวจสอบการทำ�
 // ฟังก์ชันเช็คว่าออกเน็ตได้จริงหรือไม่ โดยการลอง Connect ไปที่ Google DNS (8.8.8.8)
 bool checkInternetConnection() {
     WiFiClient testClient; // เปลี่ยนชื่อตัวแปรเพื่อไม่ให้สับสนกับ client ของ MQTT
+    testClient.setTimeout(2); // Set timeout to 2 seconds to avoid blocking MainTask
     // ลองเชื่อมต่อ port 53 (DNS) ของ Google
     if (testClient.connect("8.8.8.8", 53)) {
         testClient.stop();
@@ -807,6 +811,9 @@ void setup() {
     display.drawString(64, 40, "RESET");
     display.display();
 
+    // Create ButtonTask early so reset works even during setup (WiFi connecting phase)
+    xTaskCreate(ButtonTask, "ButtonTask", 2048, NULL, 1, &TaskButton);
+
     delay(5000);
 
     // กำหนดค่าเริ่มต้น
@@ -824,18 +831,41 @@ void setup() {
     WiFi.mode(WIFI_STA);
     wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
 
+    // Critical Fix: Wait for WiFi connection BEFORE syncing NTP
+    Serial.print("Connecting to WiFi...");
+    while (wifiMulti.run() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println(" Connected");
+
+    // Init NTP for SSL/TLS
+    // เพิ่ม Server สำรอง และ Timeout เพื่อไม่ให้ค้างตลอดไป
+    configTime(7 * 3600, 0, "pool.ntp.org", "time.google.com", "time.nist.gov");
+    Serial.print("Waiting for NTP time sync: ");
+    time_t now = time(nullptr);
+    int retry_count = 0;
+    while (now < 8 * 3600 * 2 && retry_count < 40) { // รอสูงสุด 20 วินาที (40 * 500ms)
+        delay(500);
+        Serial.print(".");
+        now = time(nullptr);
+        retry_count++;
+    }
+    
+    if (now < 8 * 3600 * 2) {
+        Serial.println("\nNTP Sync Timeout! (Proceeding, but SSL might fail)");
+    } else {
+        Serial.println(" OK");
+        Serial.print("Current Time: ");
+        Serial.println(ctime(&now));
+    }
+    
+
     espClient.setCACert(root_ca);
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(callback);
     
-    // ตรวจสอบการเชื่อมต่อ Wi-Fi
-    if (wifiMulti.run() == WL_CONNECTED) {
-        Serial.println("Wi-Fi connected");
-        internetConnected = true;
-    } else {
-        Serial.println("unable to connect Wi-Fi");
-        internetConnected = false;
-    }
+    internetConnected = true;
 
     if (!initLoRa()) {
         while (1);  // Stop if LoRa initialization fails
@@ -864,6 +894,29 @@ void setup() {
 
 }
 
+// Task for Button Logic (Separated for responsiveness)
+void ButtonTask(void *parameter) {
+    for (;;) {
+        // ตรวจสอบว่าปุ่มถูกกดและค้างไว้นานกว่า LONG_PRESS_DURATION หรือไม่
+        if (buttonPressed && (millis() - buttonPressTime >= LONG_PRESS_DURATION)) {
+            if (!resetTriggered) {
+                Serial.println("Long press detected! Resetting notifications.");
+                vTaskSuspend(TaskDisplay);      // หยุด Task แสดงผลชั่วคราว
+                resetNotification();            // เรียกใช้ฟังก์ชันรีเซ็ตการแจ้งเตือน
+                vTaskDelay(100 / portTICK_PERIOD_MS); // หน่วงเวลาเล็กน้อย
+                vTaskResume(TaskDisplay);       // ให้ Task แสดงผลกลับมาทำงานต่อ
+                resetTriggered = true;          // ป้องกันการเรียกซ้ำ
+            }
+        }
+
+        // ถ้าปุ่มถูกปล่อยแล้วรีเซ็ตการตรวจจับ
+        if (!buttonPressed && resetTriggered) {
+            resetTriggered = false;  // รีเซ็ตสถานะการทำงานของรีเซ็ต
+        }
+        vTaskDelay(50 / portTICK_PERIOD_MS); // Check every 50ms
+    }
+}
+
 // Task for main logic
 void MainTask(void *parameter) {
 
@@ -871,24 +924,6 @@ void MainTask(void *parameter) {
   static unsigned long lastReconnectAttempt = 0; // ตัวแปรจับเวลาสำหรับ Reconnect
   
   while (true) {
-    // ตรวจสอบว่าปุ่มถูกกดและค้างไว้นานกว่า LONG_PRESS_DURATION หรือไม่
-    if (buttonPressed && (millis() - buttonPressTime >= LONG_PRESS_DURATION)) {
-        if (!resetTriggered) {
-            Serial.println("Long press detected! Resetting notifications.");
-            vTaskSuspend(TaskDisplay);      // หยุด Task แสดงผลชั่วคราว
-            resetNotification();            // เรียกใช้ฟังก์ชันรีเซ็ตการแจ้งเตือน
-            vTaskDelay(100 / portTICK_PERIOD_MS); // หน่วงเวลาเล็กน้อย
-            vTaskResume(TaskDisplay);       // ให้ Task แสดงผลกลับมาทำงานต่อ
-            resetTriggered = true;          // ป้องกันการเรียกซ้ำ
-
-        }
-    }
-
-    // ถ้าปุ่มถูกปล่อยแล้วรีเซ็ตการตรวจจับ
-    if (!buttonPressed && resetTriggered) {
-        resetTriggered = false;  // รีเซ็ตสถานะการทำงานของรีเซ็ต
-    }
-
     CheckCommError();
 
     // ตรวจสอบสถานะ WiFi ก่อน ถ้าหลุดค่อยเรียก wifiMulti.run()
