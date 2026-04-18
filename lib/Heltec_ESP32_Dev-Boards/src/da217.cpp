@@ -80,7 +80,7 @@ void DA217::da217_poweron(void)
 void DA217::da217_poweroff(void)
 {
 	uint8_t temp;
-	temp = ~DA217_PWR_ON  & (~DA217_AUTOSLEEP_EN);
+	temp = (uint8_t)(~DA217_PWR_ON) & (uint8_t)(~DA217_AUTOSLEEP_EN);
 	da217_write_single_reg(DA217_REG_MODE_BW,temp);
 }
 
@@ -90,18 +90,18 @@ void DA217::da217_start_up_step_detect(void)
 	da217_write_single_reg(DA217_REG_STEP_FILTER,DA217_STEP_FILTER_EN);
 	da217_write_single_reg(DA217_REG_RESET_STEP,DA217_RESET_STEP);
 	delay(100);
-	da217_write_single_reg(DA217_REG_RESET_STEP,~DA217_RESET_STEP);
+	da217_write_single_reg(DA217_REG_RESET_STEP, (uint8_t)~DA217_RESET_STEP);
 }
 
 
 void DA217::da217_stop_step_detect(void)
 {
 	uint8_t temp;
-	da217_write_single_reg(DA217_REG_STEP_FILTER,~DA217_STEP_FILTER_EN);
+	da217_write_single_reg(DA217_REG_STEP_FILTER, (uint8_t)~DA217_STEP_FILTER_EN);
 	da217_write_single_reg(DA217_REG_RESET_STEP,DA217_RESET_STEP);
 
 	temp = 	da217_read_single_reg(DA217_REG_INT_SET0);  
-	temp &= ~DA217_STEP_INT_EN;
+	temp &= (uint8_t)~DA217_STEP_INT_EN;
 	temp &= ~DA217_SM_INT_EN;
 	da217_write_single_reg(DA217_REG_INT_SET0,temp);
 }
