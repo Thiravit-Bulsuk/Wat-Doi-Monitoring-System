@@ -24,9 +24,10 @@
 #define ECHO_PIN_2 5    // กรุณาเลือก GPIO ที่เหมาะสม
 
 // Define Tank Constants (Calibration)
+// Tank 2: สูงจริง 5m, ระยะเต็ม 25cm, ระยะน้ำหมดอ้างอิงที่ 450cm (เพื่อให้ค่า % ตรงกับความเป็นจริง)
 const int TANK2_ID = 2;
 const int TANK2_FULL_CM = 25;
-const int TANK2_EMPTY_CM = 350;
+const int TANK2_EMPTY_CM = 450;
 
 const int TANK8_ID = 8;
 const int TANK8_FULL_CM = 48; // ปรับค่าใหม่จาก 35 (คำนวณจาก 95%)
@@ -105,9 +106,9 @@ float readDistance(uint8_t triggerPin, uint8_t echoPin) {
             long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
             float dist = (duration * 0.0343) / 2;
             
-            // กรอง Noise ระยะสั้น (<20cm) หรือ Timeout (0) ให้เป็น Error
-            // ปรับจาก 25.0 เป็น 20.0 เพื่อรองรับ Tank 2 ที่เต็ม 25cm
-            if (duration == 0 || dist < 20.0) { 
+            // ปรับระยะการกรอง Noise ให้เหมาะสมกับระยะเต็มจริงที่ 25cm
+            // ใช้ 22.0 เพื่อให้มีระยะเผื่อนิดหน่อยก่อนถึงระยะเต็ม (25.0)
+            if (duration == 0 || dist < 22.0) { 
                 errorCount++;
             } else {
                 validReadings[validCount++] = dist;
@@ -279,11 +280,18 @@ void setup() {
 
     if (distance1 < 0) {
         Serial.println("Error reading distance from Sensor 1.");
-        // ถ้าอ่านค่าไม่ได้ ให้ดูประวัติ (Tank 2 Empty ~350)
-        if (lastValidDistance1 > (TANK2_EMPTY_CM - 10)) { // > 340cm
+        
+        // กรณีน้ำหมด: หากระยะล่าสุดเกิน 410cm แล้ววัดไม่ได้ ให้ถือว่าน้ำหมดจริง (หลุดระยะเซนเซอร์)
+        if (lastValidDistance1 > (TANK2_EMPTY_CM - 40)) { 
             isTankEmpty1 = true;
             shouldSendZero1 = true;
         }
+        // กรณีน้ำเต็ม (Blind Spot): หากระยะล่าสุดน้อยกว่า 30cm แล้ววัดไม่ได้ ให้ถือว่าน้ำเต็มจนบังเซนเซอร์
+        else if (lastValidDistance1 < (TANK2_FULL_CM + 5)) {
+            Serial.println("Likely Blind Spot for Tank 2. Sending 100%.");
+            shouldSendValue1 = true; 
+        }
+
         refillCount1 = 0;
     } else {
         if (isTankEmpty1) {
