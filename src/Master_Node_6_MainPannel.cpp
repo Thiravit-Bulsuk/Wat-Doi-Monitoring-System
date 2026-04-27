@@ -822,12 +822,14 @@ void setup() {
     digitalWrite(RELAY_PIN_3, HIGH);
     digitalWrite(RELAY_PIN_4, HIGH);
 
-    // --- เริ่มต้นระบบ Task ทันทีเพื่อให้หน้าจอทำงานได้แม้ไม่มี WiFi ---
+    // เริ่ม Task ปุ่มกดก่อนเพื่อให้กดค้างรีเซ็ตได้ทันทีหากจำเป็น
     xTaskCreate(ButtonTask, "ButtonTask", 2048, NULL, 1, &TaskButton);
-    xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
 
-    // เรียก resetNotification() เพื่อล้างค่าทั้งหมด
+    // 1. เคลียร์ค่าและแสดงหน้าจอ RESET ให้จบกระบวนการ (5 วินาที)
     resetNotification();
+
+    // 2. หลังจาก Reset จบแล้ว ค่อยเริ่ม Task วนแสดงผลระดับน้ำ เพื่อไม่ให้หน้าจอซ้อนกัน
+    xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
 
     // เชื่อมต่อ Wi-Fi
     WiFi.mode(WIFI_STA);
