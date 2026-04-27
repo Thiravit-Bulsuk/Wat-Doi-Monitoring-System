@@ -158,14 +158,13 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #define RELAY_PIN_3 5
 #define RELAY_PIN_4 4
 
-#define RESET_BUTTON_PIN 26
+#define RESET_BUTTON_PIN 47
 #define LONG_PRESS_DURATION 2000  // กำหนดเวลาการกดค้าง (2 วินาที)
 
 WiFiMulti wifiMulti;
 
 #define WIFI_SSID "SolarCell" // "iPhone" // WiFi Name
 #define WIFI_PASSWORD "12345678" // WiFi Password
-
 
 #define ONE_DAY_INTERVAL 43200000 // 1/2 วันใน milliseconds (12 * 60 * 60 * 1000)
 
@@ -182,44 +181,45 @@ const uint8_t Optimisation = LDRO_AUTO;         // low data rate optimisation se
 const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 SX126XLT LT;
-bool notification1Sent = false;
-bool notification2Sent = false;
-bool notification3Sent = false;
-bool notification4Sent = false;
-bool notification5Sent = false;
-bool notification6Sent = false;
+// ตัวแปรสถานะการแจ้งเตือน (มีการแก้ไขจาก MainTask และ Loop)
+volatile bool notification1Sent = false;
+volatile bool notification2Sent = false;
+volatile bool notification3Sent = false;
+volatile bool notification4Sent = false;
+volatile bool notification5Sent = false;
+volatile bool notification6Sent = false;
 
-bool notification12Sent = false;
-bool notification22Sent = false;
-bool notification32Sent = false;
-bool notification42Sent = false;
-bool notification52Sent = false; 
-bool notification62Sent = false;
+volatile bool notification12Sent = false;
+volatile bool notification22Sent = false;
+volatile bool notification32Sent = false;
+volatile bool notification42Sent = false;
+volatile bool notification52Sent = false; 
+volatile bool notification62Sent = false;
 
-int waterLevelJD = 0;
-int waterLevelPhraNon = 0;
-int waterLevelThamYai = 0;
-int waterLevelRongPui = 0;  // Water level for RongPui
-int waterLevelPlastic = 0;  // Water level for Plastic Tank
-int spdStatus = 0;          // 0 for Good, 1 for Broken
+// ตัวแปรข้อมูลเซ็นเซอร์ (อัปเดตใน Loop อ่านใน Display/MQTT Task)
+volatile int waterLevelJD = 0;
+volatile int waterLevelPhraNon = 0;
+volatile int waterLevelThamYai = 0;
+volatile int waterLevelRongPui = 0;
+volatile int waterLevelPlastic = 0;
+volatile int spdStatus = 0;
 
 // เพิ่มตัวนับสำหรับป้องกัน false trigger (debounce แบบซอฟต์แวร์)
-int lowCountJD = 0;
-int lowCountPhraNon = 0;
-int lowCountThamYai = 0;
-int lowCountRongPui = 0;
-int lowCountPlastic = 0;
+volatile int lowCountJD = 0;
+volatile int lowCountPhraNon = 0;
+volatile int lowCountThamYai = 0;
+volatile int lowCountRongPui = 0;
+volatile int lowCountPlastic = 0;
 
 const int LOW_THRESHOLD = 5; // ต้องต่ำติดกันกี่ครั้งถึงจะแจ้งเตือน
 
-
 // Variables to track last received time
-unsigned long lastReceivedJD = 0;
-unsigned long lastReceivedPhraNon = 0;
-unsigned long lastReceivedThamYai = 0;
-unsigned long lastReceivedRongPui = 0;  // Last received time for RongPui
-unsigned long lastReceivedPlastic = 0;
-unsigned long lastReceivedNongPog = 0;
+volatile unsigned long lastReceivedJD = 0;
+volatile unsigned long lastReceivedPhraNon = 0;
+volatile unsigned long lastReceivedThamYai = 0;
+volatile unsigned long lastReceivedRongPui = 0;
+volatile unsigned long lastReceivedPlastic = 0;
+volatile unsigned long lastReceivedNongPog = 0;
 const unsigned long commTimeout = 1500000; // 25 minutes in milliseconds
 
 volatile bool buttonPressed = false;     // สถานะว่าปุ่มถูกกดหรือไม่
@@ -275,8 +275,27 @@ void sendLineMessage(String message) {
 
     lineClient.print(request);
 
-    Serial.println("LINE Message Sent: " + message);
-    publishMessage(message_topic, message, true);
+    // อ่าน Response จาก Server เพื่อตรวจสอบสถานะ (เช่น กรณีโควต้าหมด)
+    String statusLine = "";
+    while (lineClient.connected()) {
+        String line = lineClient.readStringUntil('\n');
+        if (statusLine == "") statusLine = line; // เก็บ HTTP Status Line เช่น HTTP/1.1 429 Too Many Requests
+        if (line == "\r") {
+            break;
+        }
+    }
+
+    if (statusLine.indexOf("200") != -1) { // 200 คือ HTTP Status OK (ส่งสำเร็จ) ไม่ใช่จำนวนข้อความ
+        Serial.println("LINE Message Sent: " + message);
+        publishMessage(message_topic, message, true);
+    } else {
+        Serial.println("LINE API Error: " + statusLine);
+        String errorAlert = "⚠️ ระบบ: ส่ง LINE ไม่สำเร็จ (" + statusLine.substring(9) + ")";
+        if (statusLine.indexOf("429") != -1) { // 429 คือ HTTP Status Too Many Requests (โควต้าเต็ม)
+            errorAlert = "🛑 แจ้งเตือน: โควต้า LINE Messaging API เต็มแล้ว (HTTP 429)!";
+        }
+        publishMessage(message_topic, errorAlert, false);
+    }
     
     // วนลูปเพื่อให้ MQTT Client ทำงานและส่งข้อความออกไปจริงๆ ก่อนที่จะทำอย่างอื่นต่อ
     unsigned long start = millis();
