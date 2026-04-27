@@ -822,26 +822,9 @@ void setup() {
     digitalWrite(RELAY_PIN_3, HIGH);
     digitalWrite(RELAY_PIN_4, HIGH);
 
-    Serial.println("Resetting All Values...");
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 10, "VALUES");
-    display.drawString(64, 40, "RESET");
-    display.display();
-
-    // Create ButtonTask early so reset works even during setup (WiFi connecting phase)
+    // --- เริ่มต้นระบบ Task ทันทีเพื่อให้หน้าจอทำงานได้แม้ไม่มี WiFi ---
     xTaskCreate(ButtonTask, "ButtonTask", 2048, NULL, 1, &TaskButton);
-
-    delay(5000);
-
-    // กำหนดค่าเริ่มต้น
-    waterLevelJD = 0;
-    waterLevelPhraNon = 0;
-    waterLevelThamYai = 0;
-    waterLevelRongPui = 0;
-    waterLevelPlastic = 0;
-    spdStatus = 0;
+    xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
 
     // เรียก resetNotification() เพื่อล้างค่าทั้งหมด
     resetNotification();
@@ -850,41 +833,11 @@ void setup() {
     WiFi.mode(WIFI_STA);
     wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
 
-    // Critical Fix: Wait for WiFi connection BEFORE syncing NTP
-    Serial.print("Connecting to WiFi...");
-    while (wifiMulti.run() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println(" Connected");
-
-    // Init NTP for SSL/TLS
-    // เพิ่ม Server สำรอง และ Timeout เพื่อไม่ให้ค้างตลอดไป
-    configTime(7 * 3600, 0, "pool.ntp.org", "time.google.com", "time.nist.gov");
-    Serial.print("Waiting for NTP time sync: ");
-    time_t now = time(nullptr);
-    int retry_count = 0;
-    while (now < 8 * 3600 * 2 && retry_count < 40) { // รอสูงสุด 20 วินาที (40 * 500ms)
-        delay(500);
-        Serial.print(".");
-        now = time(nullptr);
-        retry_count++;
-    }
-    
-    if (now < 8 * 3600 * 2) {
-        Serial.println("\nNTP Sync Timeout! (Proceeding, but SSL might fail)");
-    } else {
-        Serial.println(" OK");
-        Serial.print("Current Time: ");
-        Serial.println(ctime(&now));
-    }
-    
-
     espClient.setCACert(root_ca);
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(callback);
     
-    internetConnected = true;
+    internetConnected = false; // เริ่มต้นเป็น false จนกว่าจะเช็คผ่าน
 
     if (!initLoRa()) {
         while (1);  // Stop if LoRa initialization fails
@@ -904,7 +857,6 @@ void setup() {
     mqttTimer.setInterval(mqttSendInterval, sendMQTTData);
     // Create tasks
     xTaskCreate(MainTask, "MainTask", 10000, NULL, 1, &TaskMain);
-    xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
 
     // สร้าง Task สำหรับรีเซ็ตอัตโนมัติ
     // disableชั่วคราวเพื่อทดสอบ
@@ -941,9 +893,16 @@ void MainTask(void *parameter) {
 
   static unsigned long lastInternetCheck = 0;
   static unsigned long lastReconnectAttempt = 0; // ตัวแปรจับเวลาสำหรับ Reconnect
+  static bool ntpSynced = false;
   
   while (true) {
     CheckCommError();
+
+    // จัดการ NTP เมื่อเชื่อมต่อได้ครั้งแรก
+    if (WiFi.status() == WL_CONNECTED && !ntpSynced) {
+        configTime(7 * 3600, 0, "pool.ntp.org", "time.google.com");
+        ntpSynced = true;
+    }
 
     // ตรวจสอบสถานะ WiFi ก่อน ถ้าหลุดค่อยเรียก wifiMulti.run()
     // ตรวจสอบสถานะ WiFi และ Internet จริงๆ
@@ -960,6 +919,7 @@ void MainTask(void *parameter) {
         }
     } else {
         internetConnected = false;
+        ntpSynced = false;
         if (wifiMulti.run() == WL_CONNECTED) {
              Serial.println("Wi-Fi reconnected");
              lastInternetCheck = 0; // บังคับให้เช็คเน็ตทันทีในรอบถัดไป
