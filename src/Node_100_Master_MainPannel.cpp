@@ -25,6 +25,7 @@ Master Node จะตรวจจับได้และทำการ Publish
 #include <HT_SSD1306Wire.h>
 #include <Arduino.h>
 #include <ProgramLT_Definitions.h>
+#include "NodeConfig.h"
 #include <time.h>
 
 void sendLineMessage(String message);
@@ -38,7 +39,7 @@ void resetNotification();
 void VextON(void);
 void VextOFF(void);
 void displayData(String tankName, String message);
-void displaySPDStatus();
+bool initLoRa(); // ย้ายมาไว้ตรงนี้
 void CheckCommError();
 void DisplayTimerTask(void *pvParameters);
 void reconnect();
@@ -62,7 +63,7 @@ SimpleTimer mqttTimer;
 // ตัวแปรสำหรับสถานะการแสดงผล (วนรอบระหว่าง 0-12)
 // ตัวแปร global track state และพักหน้าจอ
 volatile int displayState = 0;         // 0..12 คือข้อมูลแต่ละหน้า
-
+volatile int activeNodeIdx = 0;        // ตัวชี้ Node ที่กำลังแสดงผล
 const TickType_t displayInterval = 3500 / portTICK_PERIOD_MS; // 3500 ms
 const TickType_t pauseInterval   = 500 / portTICK_PERIOD_MS;  // 100 ms
 
@@ -89,13 +90,6 @@ unsigned long lastMsg = 0;
 #define MSG_BUFFER_SIZE (50)
 char msg[MSG_BUFFER_SIZE];
 
-// Node topics
-const char* sensor1_topic = "JD";
-const char* sensor2_topic = "PhraNon";
-const char* sensor3_topic = "ThamYai";
-const char* sensor4_topic = "RongPui";  // New Node RongPui
-const char* sensor5_topic = "NongPog";      // SPD topic
-const char* sensor6_topic = "Plastic"; // New Node Plastic
 const char* message_topic = "message";
 const char* notification_control_topic = "notification_control";
 const char* notification_status_topic = "notification_status";
@@ -163,7 +157,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
 WiFiMulti wifiMulti;
 
-#define WIFI_SSID "SolarCell" // "iPhone" // WiFi Name
+#define WIFI_SSID  "SolarCell" // "iPhone" // WiFi Name
 #define WIFI_PASSWORD "12345678" // WiFi Password
 
 #define ONE_DAY_INTERVAL 43200000 // 1/2 วันใน milliseconds (12 * 60 * 60 * 1000)
@@ -181,46 +175,20 @@ const uint8_t Optimisation = LDRO_AUTO;         // low data rate optimisation se
 const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 SX126XLT LT;
-// ตัวแปรสถานะการแจ้งเตือน (มีการแก้ไขจาก MainTask และ Loop)
-volatile bool notification1Sent = false;
-volatile bool notification2Sent = false;
-volatile bool notification3Sent = false;
-volatile bool notification4Sent = false;
-volatile bool notification5Sent = false;
-volatile bool notification6Sent = false;
 
-volatile bool notification12Sent = false;
-volatile bool notification22Sent = false;
-volatile bool notification32Sent = false;
-volatile bool notification42Sent = false;
-volatile bool notification52Sent = false; 
-volatile bool notification62Sent = false;
-
-// ตัวแปรข้อมูลเซ็นเซอร์ (อัปเดตใน Loop อ่านใน Display/MQTT Task)
-volatile int waterLevelJD = 0;
-volatile int waterLevelPhraNon = 0;
-volatile int waterLevelThamYai = 0;
-volatile int waterLevelRongPui = 0;
-volatile int waterLevelPlastic = 0;
-volatile int spdStatus = 0;
-
-// เพิ่มตัวนับสำหรับป้องกัน false trigger (debounce แบบซอฟต์แวร์)
-volatile int lowCountJD = 0;
-volatile int lowCountPhraNon = 0;
-volatile int lowCountThamYai = 0;
-volatile int lowCountRongPui = 0;
-volatile int lowCountPlastic = 0;
-
-const int LOW_THRESHOLD = 5; // ต้องต่ำติดกันกี่ครั้งถึงจะแจ้งเตือน
-
-// Variables to track last received time
-volatile unsigned long lastReceivedJD = 0;
-volatile unsigned long lastReceivedPhraNon = 0;
-volatile unsigned long lastReceivedThamYai = 0;
-volatile unsigned long lastReceivedRongPui = 0;
-volatile unsigned long lastReceivedPlastic = 0;
-volatile unsigned long lastReceivedNongPog = 0;
-const unsigned long commTimeout = 1500000; // 25 minutes in milliseconds
+// การตั้งค่า Node ทั้งหมดในระบบ (เพิ่ม Node 8, 9, 10 ได้ที่นี่)
+Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
+    {1, "JD",       "JD",       50, RELAY_PIN_1, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {2, "PhraNon",  "PhraNon",  50, RELAY_PIN_2, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {6, "NongPog",  "NongPog",  0,  0,           MSG_TYPE_SPD,   0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0}
+    // สามารถเพิ่ม Node ใหม่ได้ที่นี่ เช่น {9, "Tank9", "Tank9", 50, 0, MSG_TYPE_WATER, 0, 0, STATE_NORMAL, STATE_NORMAL, 0}
+};
+const int numNodes = sizeof(nodes) / sizeof(nodes[0]);
+const int LOW_THRESHOLD = 5; // จำนวนครั้งที่ต้องอ่านค่าต่ำกว่า Threshold ติดกันเพื่อแจ้งเตือน
+const unsigned long commTimeout = 1500000; // 25 นาที ในหน่วยมิลลิวินาที สำหรับตรวจสอบการขาดการสื่อสาร
 
 volatile bool buttonPressed = false;     // สถานะว่าปุ่มถูกกดหรือไม่
 volatile unsigned long buttonPressTime = 0;  // เวลาที่ปุ่มถูกกด
@@ -351,150 +319,81 @@ void receiveData() {
     int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
 
     if (packetSize > 0) {
-        Serial.println("Received packet");
-
-        LT.startReadSXBuffer(0);
+        if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+            Serial.println("Received packet (size OK)");
         
-        uint8_t messageType = LT.readUint8();
-        uint8_t receiverID = LT.readUint8();
-        uint8_t senderId = LT.readUint8();
-        uint8_t nodeID = LT.readUint8();
-        uint8_t message = LT.readUint8();
+            LoRaPacket packet;
+            uint8_t rxBuffer[sizeof(LoRaPacket)];
 
-        LT.endReadSXBuffer();
-        if ((messageType == 1 || messageType == 2 || messageType == 3) && receiverID == 6) {
-            
-            Serial.print("MessageType: "); Serial.println(messageType);
-            Serial.print("ReceiverID: "); Serial.println(receiverID);
-            Serial.print("SenderID: "); Serial.println(senderId);
-            Serial.print("nodeID: "); Serial.println(nodeID);
-            Serial.print("Message: "); Serial.println(message);
-
-            // Check if sender is Node 5 (Repeater Node)
-            if (senderId == 5) {
-              if (messageType == 1) {
-                int waterLevel = (int)message;
-                if (nodeID == 1) {
-                    waterLevelJD = waterLevel; // Store JD water level
-                    lastReceivedJD = millis(); // Update last received time
-                    if (notification12Sent) {
-                        sendLineMessage("DataNode แท็งค์เจดีย์ กลับมาทำงานปกติแล้ว");
-                    }
-                    notification12Sent = false; // Reset Comm Error flag for JD
-                    // Debounce / require LOW_THRESHOLD consecutive low readings
-                    if (waterLevel < 50) {
-                        lowCountJD++;
-                        if (lowCountJD >= LOW_THRESHOLD && !notification1Sent) {
-                            sendLineMessage("แท็งค์เจดีย์น้ำเหลือครึ่งแท็งค์!!!");
-                            Serial.println("Notification Sent JD");
-                            activateRelay(nodeID);
-                            notification1Sent = true;
-                            lowCountJD = 0; // reset counter after notifying
-                        }
-                    } else {
-                        // reset counter when reading is back to normal
-                        lowCountJD = 0;
-                    }
-                } else if (nodeID == 2) {
-                    waterLevelPhraNon = waterLevel; // Store PhraNon water level
-                    lastReceivedPhraNon = millis(); // Update last received time
-                    if (notification22Sent) {
-                        sendLineMessage("DataNode แท็งค์พระนอน กลับมาทำงานปกติแล้ว");
-                    }
-                    notification22Sent = false; // Reset Comm Error flag for PhraNon
-                    if (waterLevel < 50) {
-                        lowCountPhraNon++;
-                        if (lowCountPhraNon >= LOW_THRESHOLD && !notification2Sent) {
-                            sendLineMessage("แท็งค์พระนอนน้ำเหลือครึ่งแท็งค์!!!");
-                            Serial.println("Notification Sent PhraNon");
-                            activateRelay(nodeID);
-                            notification2Sent = true;
-                            lowCountPhraNon = 0;
-                        }
-                    } else {
-                        lowCountPhraNon = 0;
-                    }
-                } else if (nodeID == 3) {
-                    waterLevelThamYai = waterLevel; // Store ThamYai water level
-                    lastReceivedThamYai = millis(); // Update last received time
-                    if (notification32Sent) {
-                        sendLineMessage("DataNode แท็งค์ถ้ำใหญ่ กลับมาทำงานปกติแล้ว");
-                    }
-                    notification32Sent = false; // Reset Comm Error flag for ThamYai
-                    if (waterLevel < 50) {
-                        lowCountThamYai++;
-                        if (lowCountThamYai >= LOW_THRESHOLD && !notification3Sent) {
-                            sendLineMessage("แท็งค์ถ้ำใหญ่น้ำเหลือครึ่งแท็งค์!!!");
-                            Serial.println("Notification Sent ThamYai");
-                            activateRelay(nodeID);
-                            notification3Sent = true;
-                            lowCountThamYai = 0;
-                        }
-                    } else {
-                        lowCountThamYai = 0;
-                    }
-                } else if (nodeID == 4) {
-                    waterLevelRongPui = waterLevel; // Store RongPui water level
-                    lastReceivedRongPui = millis(); // Update last received time
-                    if (notification42Sent) {
-                        sendLineMessage("DataNode แท็งค์โรงปุ๋ย กลับมาทำงานปกติแล้ว");
-                    }
-                    notification42Sent = false; // Reset Comm Error flag for RongPui
-                    if (waterLevel < 50) {
-                        lowCountRongPui++;
-                        if (lowCountRongPui >= LOW_THRESHOLD && !notification4Sent) {
-                            sendLineMessage("แท็งค์โรงปุ๋ยน้ำเหลือครึ่งแท็งค์!!!");
-                            Serial.println("Notification Sent RongPui");
-                            activateRelay(nodeID);
-                            notification4Sent = true;
-                            lowCountRongPui = 0;
-                        }
-                    } else {
-                        lowCountRongPui = 0;
-                    }
-                } else if (nodeID == 8) {
-                    waterLevelPlastic = waterLevel; // Store Plastic water level
-                    lastReceivedPlastic = millis(); // Update last received time
-                    if (notification62Sent) {
-                        sendLineMessage("DataNode แท็งค์พลาสติก กลับมาทำงานปกติแล้ว");
-                    }
-                    notification62Sent = false; // Reset Comm Error flag for Plastic
-                    if (waterLevel < 10) {
-                        lowCountPlastic++;
-                        if (lowCountPlastic >= LOW_THRESHOLD && !notification6Sent) {
-                            sendLineMessage("แท็งค์พลาสติกน้ำเกือบหมดแล้ว!!!");
-                            Serial.println("Notification Sent Plastic");
-                            // No relay activation for Plastic tank
-                            notification6Sent = true;
-                            lowCountPlastic = 0;
-                        }
-                    } else {
-                        lowCountPlastic = 0;
-                    }
-                }
-              } else if (messageType == 2 && nodeID == 7) {
-                spdStatus = (int)message;
-                lastReceivedNongPog = millis(); // Update last received time
-                if (notification52Sent) {
-                    sendLineMessage("DataNode หนองพอก กลับมาทำงานปกติแล้ว");
-                }
-                notification52Sent = false; // Reset Comm Error flag for SPD
-                if (spdStatus == 1 && !notification5Sent) {
-                    sendLineMessage("SPD หมดสภาพแล้ว ตรวจสอบด่วน!!!");
-                    Serial.print("Notification Sent SPD");
-                    notification5Sent = true;
-                    // No relay activation for SPD, just notify via LINE.
-                }
-              }
-            newDataReceived = true; // Set flag to indicate new data was received
+            LT.startReadSXBuffer(0);
+            for (int i = 0; i < sizeof(LoRaPacket); i++) {
+                rxBuffer[i] = LT.readUint8();
             }
-        
-        } else {
-            Serial.println("Message does not meet criteria, ignoring.");
-        }
-        
-  }
+            // ถ้ามี CRC ติดมาด้วย 2 ไบต์ ให้อ่านทิ้งเพื่อให้ Buffer ว่าง
+            if (packetSize == (sizeof(LoRaPacket) + 2)) {
+                LT.readUint8(); // CRC 1
+                LT.readUint8(); // CRC 2
+            }
+            LT.endReadSXBuffer();
+            
+            memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
+            if (packet.receiverID == 100 && packet.senderID == 10) {
+            
+            Serial.print("MessageType: "); Serial.println(packet.messageType);
+            Serial.print("nodeID: "); Serial.println(packet.sourceNodeID);
+            Serial.print("Value: "); Serial.println(packet.value);
+            Serial.print("Battery: "); Serial.println(packet.battery);
+
+            for (int i = 0; i < numNodes; i++) {
+                if (nodes[i].id == packet.sourceNodeID) {
+                    nodes[i].lastValue = (int)packet.value;
+                    nodes[i].lastSeen = millis();
+                    nodes[i].battery = packet.battery; // บันทึกค่าแบตเตอรี่ที่ได้รับ
+
+                    // กรณีกลับมาทำงานปกติหลังจาก Comm Error
+                    if (nodes[i].commState == STATE_COMM_ERROR) {
+                        sendLineMessage("DataNode " + nodes[i].name + " กลับมาทำงานปกติแล้ว");
+                        nodes[i].commState = STATE_NORMAL;
+                    }
+
+                    // Logic สำหรับระดับน้ำ
+                    if (nodes[i].msgType == MSG_TYPE_WATER) {
+                        if (nodes[i].lastValue < nodes[i].threshold) {
+                            nodes[i].lowCount++;
+                            if (nodes[i].lowCount >= LOW_THRESHOLD && nodes[i].alertState == STATE_NORMAL) {
+                                sendLineMessage("แท็งค์ " + nodes[i].name + " น้ำเหลือต่ำกว่า " + String(nodes[i].threshold) + "% !!!");
+                                activateRelay(nodes[i].id);
+                                nodes[i].alertState = STATE_LOW_WATER;
+                            }
+                        } else {
+                            nodes[i].lowCount = 0;
+                            // ถ้าน้ำกลับมาปกติ (เกิน Threshold) และเคยเตือนไปแล้ว ให้ Reset State
+                            // ในที่นี้สมมติว่าให้ Reset อัตโนมัติเมื่อน้ำเกิน Threshold
+                            if (nodes[i].alertState == STATE_LOW_WATER) nodes[i].alertState = STATE_NORMAL;
+                        }
+                    } 
+                    // Logic สำหรับ SPD
+                    else if (nodes[i].msgType == MSG_TYPE_SPD) {
+                        if (nodes[i].lastValue == 1 && nodes[i].alertState == STATE_NORMAL) {
+                            sendLineMessage("SPD " + nodes[i].name + " หมดสภาพแล้ว ตรวจสอบด่วน!!!");
+                            nodes[i].alertState = STATE_LOW_WATER;
+                        }
+                    }
+                    newDataReceived = true;
+                    break;
+                }
+            }
+            newDataReceived = true; // Set flag to indicate new data was received
+        } else {
+                Serial.println("Message does not meet criteria (ID mismatch), ignoring.");
+            }
+        } else {
+            Serial.print("Received packet with unexpected size: "); Serial.print(packetSize); 
+            Serial.print(" bytes. Expected "); Serial.print(sizeof(LoRaPacket)); Serial.println(" or +2. Ignoring.");
+            LT.endReadSXBuffer();
+        }
+    }
 }
 
 
@@ -512,10 +411,10 @@ void activateRelay(uint8_t nodeID) {
         case 2:
             digitalWrite(RELAY_PIN_2, LOW);  // Phranon
             break;
-        case 3:
+        case 4:
             digitalWrite(RELAY_PIN_3, LOW);  // ThamYai
             break;
-        case 4:
+        case 5:
             digitalWrite(RELAY_PIN_4, LOW);  // RongPui
             break;
         default:
@@ -525,19 +424,11 @@ void activateRelay(uint8_t nodeID) {
 
 // Function to reset notifications and relays
 void resetNotification() {
-    notification1Sent = false;
-    notification2Sent = false;
-    notification3Sent = false;
-    notification4Sent = false;  
-    notification5Sent = false;  
-    notification6Sent = false;
-
-    notification12Sent = false;
-    notification22Sent = false;
-    notification32Sent = false;
-    notification42Sent = false;  
-    notification52Sent = false;  
-    notification62Sent = false;
+    for (int i = 0; i < numNodes; i++) {
+        nodes[i].alertState = STATE_NORMAL;
+        nodes[i].commState = STATE_NORMAL;
+        nodes[i].lowCount = 0;
+    }
 
     digitalWrite(RELAY_PIN_1, HIGH);
     digitalWrite(RELAY_PIN_2, HIGH);
@@ -576,130 +467,55 @@ void displayData(String tankName, String message) {
     display.display();
 }
 
-// Function to display SPD status on OLED
-void displaySPDStatus() {
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.setFont(ArialMT_Plain_24);
-    display.drawString(64, 5, "SPD");
-    display.drawString(64, 30, spdStatus == 0 ? "Working" : "Failed");
-    display.display();
-}
-
 void CheckCommError() {
-  unsigned long currentMillis = millis();  // อัปเดต currentMillis ที่นี่
-
-  if (currentMillis - lastReceivedJD >= commTimeout && !notification12Sent) {
-      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode แท็งค์เจดีย์!");
-      notification12Sent = true;
-    }
-  if (currentMillis - lastReceivedPhraNon >= commTimeout && !notification22Sent) {
-      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode แท็งค์พระนอน!");
-      notification22Sent = true;
-    }
-  if (currentMillis - lastReceivedThamYai >= commTimeout && !notification32Sent) {
-      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode แท็งค์ถ้ำใหญ่!");
-      notification32Sent = true;
-    }
-  if (currentMillis - lastReceivedRongPui >= commTimeout && !notification42Sent) {
-      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode แท็งค์โรงปุ๋ย!");
-      notification42Sent = true;
-    }
-  if (currentMillis - lastReceivedPlastic >= commTimeout && !notification62Sent) {
-      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode แท็งค์พลาสติก!");
-      notification62Sent = true;
-    }
-  if (currentMillis - lastReceivedNongPog >= commTimeout && !notification52Sent) {
-      sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode หนองพอก!");
-      notification52Sent = true;
+    unsigned long currentMillis = millis();
+    for (int i = 0; i < numNodes; i++) {
+        if (currentMillis - nodes[i].lastSeen >= commTimeout && nodes[i].commState == STATE_NORMAL) {
+            sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode " + nodes[i].name);
+            nodes[i].commState = STATE_COMM_ERROR;
+        }
     }
 }
-
 
 void DisplayTimerTask(void *pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     for (;;) {
-        // แสดงผลตาม state
-        switch (displayState) {
-            case 0:
-                if (notification12Sent) displayData("JD", "CommError");
-                else displayData("JD", String(waterLevelJD) + " %");
-                break;
-
-            case 1:
-                display.clear();
-                display.display();
-                break;
-
-            case 2:
-                if (notification22Sent) displayData("PhraNon", "CommError");
-                else displayData("PhraNon", String(waterLevelPhraNon) + " %");
-                break;
-
-            case 3:
-                display.clear();
-                display.display();
-                break;
-
-            case 4: // Plastic Tank
-                if (notification62Sent) displayData("Plastic", "CommError");
-                else displayData("Plastic", String(waterLevelPlastic) + " %");
-                break;
-
-            case 5:
-                display.clear();
-                display.display();
-                break;
-
-            case 6:
-                if (notification32Sent) displayData("ThamYai", "CommError");
-                else displayData("ThamYai", String(waterLevelThamYai) + " %");
-                break;
-
-            case 7:
-                display.clear();
-                display.display();
-                break;
-
-            case 8:
-                if (notification42Sent) displayData("RongPui", "CommError");
-                else displayData("RongPui", String(waterLevelRongPui) + " %");
-                break;
-
-            case 9:
-                display.clear();
-                display.display();
-                break;
-
-            case 10: // SPD
-                if (notification52Sent) displayData("SPD", "CommError");
-                else displaySPDStatus();
-                break;
-
-            case 11:
-                display.clear();
-                display.display();
-                break;
-
-            case 12: // Internet Error
-                displayData("Internet", "Error");
-                break;
-
-            case 13:
-                display.clear();
-                display.display();
-                break;
+        int currentTotalDisplayItems = numNodes;
+        if (!internetConnected) {
+            currentTotalDisplayItems++; // เพิ่ม 1 ช่องสำหรับ "Internet Error"
         }
 
-        // คำนวณจำนวน state รวมพักหน้าจอ
-        int maxState = internetConnected ? 12 : 14;
+        // สลับแสดงผล: ข้อมูล Node -> หน้าว่าง (Flash) หรือ Internet Error -> หน้าว่าง
+        if (displayState % 2 == 0) {
+            if (activeNodeIdx < numNodes) {
+                // แสดงข้อมูล Node ปัจจุบัน
+                Node &n = nodes[activeNodeIdx];
+                if (n.commState == STATE_COMM_ERROR) {
+                    displayData(n.name, "CommError");
+                } else if (n.msgType == MSG_TYPE_SPD) {
+                    displayData(n.name, n.lastValue == 0 ? "Working" : "Failed");
+                } else {
+                    displayData(n.name, String(n.lastValue) + " %");
+                }
+            } else if (activeNodeIdx == numNodes && !internetConnected) {
+                // แสดง Internet Error หาก activeNodeIdx ชี้ไปที่ช่องสุดท้ายและไม่มีเน็ต
+                displayData("Internet", "Error");
+            } else {
+                // กรณี activeNodeIdx ชี้ไปที่ช่อง Internet Error แต่เน็ตต่ออยู่ ให้แสดงหน้าว่างแทน
+                display.clear();
+                display.display();
+            }
+        } else {
+            // หน้าว่าง
+            display.clear();
+            display.display();
+            // ขยับไป Node ถัดไปหลังจากหน้าว่าง
+            activeNodeIdx = (activeNodeIdx + 1) % currentTotalDisplayItems;
+        }
 
-        // รอเวลาตามประเภท state
         TickType_t delayTime = (displayState % 2 == 0) ? displayInterval : pauseInterval;
-
-        // ไป state ถัดไป
-        displayState = (displayState + 1) % maxState;
+        displayState = (displayState + 1) % (currentTotalDisplayItems * 2); // วนรอบตามจำนวนรายการทั้งหมด (ข้อมูล + หน้าว่าง)
 
         // delay แบบ vTaskDelayUntil เพื่อให้เวลา delay คงที่แม่นยำ
         vTaskDelayUntil(&xLastWakeTime, delayTime);
@@ -776,15 +592,17 @@ void publishMessage(const char* topic, String payload , boolean retained) {
 void sendMQTTData() {
     publishMessage(notification_status_topic, notificationsEnabled ? "1" : "0", true);
 
-    if (newDataReceived) {
-        // Publish the latest water levels and SPD status to MQTT topics
-        publishMessage(sensor1_topic, String(waterLevelJD), true);
-        publishMessage(sensor2_topic, String(waterLevelPhraNon), true);
-        publishMessage(sensor3_topic, String(waterLevelThamYai), true);
-        publishMessage(sensor4_topic, String(waterLevelRongPui), true);
-        publishMessage(sensor6_topic, String(waterLevelPlastic), true);
-        publishMessage(sensor5_topic, String(spdStatus), true);
+    // วน Loop ส่งข้อมูลของทุก Node ขึ้น MQTT ตาม topic ที่กำหนดใน Struct
+    for (int i = 0; i < numNodes; i++) {
+        // ส่งเฉพาะค่าล่าสุดที่มี
+        publishMessage(nodes[i].mqttTopic, String(nodes[i].lastValue), true);
+        
+        // ส่งค่าแบตเตอรี่ขึ้น MQTT (เฉพาะ Node ที่มีค่าแบตเตอรี่ > 0)
+        String batTopic = String(nodes[i].mqttTopic) + "/battery";
+        publishMessage(batTopic.c_str(), String(nodes[i].battery, 2), true);
+    }
 
+    if (newDataReceived) {
         // Reset the newDataReceived flag
         newDataReceived = false;
     }
@@ -847,13 +665,10 @@ void setup() {
     LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
     delay(1000);
 
-    // Initialize last received times to current time
-    lastReceivedJD = millis();
-    lastReceivedPhraNon = millis();
-    lastReceivedThamYai = millis();
-    lastReceivedRongPui = millis();
-    lastReceivedPlastic = millis();
-    lastReceivedNongPog = millis();
+    // เริ่มต้นเวลาสื่อสารสำหรับทุก Node
+    for (int i = 0; i < numNodes; i++) {
+        nodes[i].lastSeen = millis();
+    }
 
     // Set up the MQTT Timer to call `sendMQTTData` every 10 minutes
     mqttTimer.setInterval(mqttSendInterval, sendMQTTData);
@@ -1000,12 +815,8 @@ void MainTask(void *parameter) {
             if (mqttRequestData) {
                 Serial.println("Manual Data Request via MQTT");
                 publishMessage(message_topic, "Manual data update sent", false);
-                publishMessage(sensor1_topic, String(waterLevelJD), true);
-                publishMessage(sensor2_topic, String(waterLevelPhraNon), true);
-                publishMessage(sensor3_topic, String(waterLevelThamYai), true);
-                publishMessage(sensor4_topic, String(waterLevelRongPui), true);
-                publishMessage(sensor6_topic, String(waterLevelPlastic), true);
-                publishMessage(sensor5_topic, String(spdStatus), true);
+                
+                sendMQTTData(); // เรียกฟังก์ชันเดิมที่วน loop ให้อยู่แล้ว
                 
                 mqttRequestData = false;
                 unsigned long start = millis();

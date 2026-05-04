@@ -1,5 +1,5 @@
-// Data Node 2 (PhraNon)
-// เพิ่มเซ็นเซอร์ตัวที่สอง สำหรับแทงก์พลาสติก โดยตั้งให้เป็น tank 8 ต้องไปแก้ master node ให้อ่านว่ารับข้อมูลจาก node 8
+// Data Node 2 (PhraNon & Plastic)
+// รองรับเซ็นเซอร์ 2 ชุด: ชุดที่ 1 คือแทงก์พระนอน (ID 2) และชุดที่ 2 คือแทงก์พลาสติก (ID 3)
 #include <Arduino.h>
 #include <SPI.h>  
 #include <Wire.h>
@@ -7,6 +7,7 @@
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
 #include <esp_sleep.h>
+#include "NodeConfig.h"
 
 // Define LoRa settings
 #define LORA_DEVICE DEVICE_SX1262
@@ -29,9 +30,9 @@ const int TANK2_ID = 2;
 const int TANK2_FULL_CM = 25;
 const int TANK2_EMPTY_CM = 450;
 
-const int TANK8_ID = 8;
-const int TANK8_FULL_CM = 48; // ปรับค่าใหม่จาก 35 (คำนวณจาก 95%)
-const int TANK8_EMPTY_CM = 240;
+const int TANK3_ID = 3;
+const int TANK3_FULL_CM = 48; // ปรับค่าใหม่จาก 35 (คำนวณจาก 95%)
+const int TANK3_EMPTY_CM = 240;
 
 const uint32_t Frequency = 923000000;           // Frequency of transmissions
 const uint32_t Offset = 0;                      // Offset frequency for calibration purposes
@@ -44,7 +45,7 @@ const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation se
 const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE 1
-#define REPEATER_NODE 5
+#define REPEATER_NODE 10
 
 SX126XLT LT;
 
@@ -168,24 +169,28 @@ float readDistance(uint8_t triggerPin, uint8_t echoPin) {
 
 // Function to send data
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint8_t percentage) {
-    delay(1000); // Delay before sending
-    uint8_t len;
-    Serial.println(percentage);     // Print the percentage to be sent
-    LT.startWriteSXBuffer(0);       // Start writing to buffer
+    delay(1000);
 
-    LT.writeUint8(MessageType);     // Packet type
-    LT.writeUint8(RepeaterNode);    // Repeater Node ID
-    LT.writeUint8(tankID);          // Tank ID
-    LT.writeUint8(percentage);      // Data to be sent (percentage)
+    LoRaPacket packet;
+    packet.messageType = MessageType;
+    packet.receiverID = RepeaterNode;
+    packet.senderID = 2; // Node ID หลักคือ 2
+    packet.sourceNodeID = tankID; // แต่ sourceNodeID เปลี่ยนตามแทงก์ (2 หรือ 3)
+    packet.value = percentage;
+    packet.battery = 0.0;
 
-    len = LT.endWriteSXBuffer();    // Close the packet and get length
-    uint8_t TXPacketL = LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX); // Send packet with TXpower
-    if (TXPacketL == 0) {
-        Serial.println("Error: Failed to send data");
-    } else {
-        Serial.println("Data sent successfully");
+    uint8_t txBuffer[sizeof(LoRaPacket)];
+    memcpy(txBuffer, &packet, sizeof(LoRaPacket)); // Copy struct to byte array
+
+    Serial.print("Sending Data: TankID="); Serial.print(tankID); Serial.print(", %="); Serial.println(percentage);
+
+    LT.startWriteSXBuffer(0);
+    for (int i = 0; i < sizeof(LoRaPacket); i++) {
+        LT.writeUint8(txBuffer[i]);
     }
-    return TXPacketL;
+    uint8_t len = LT.endWriteSXBuffer();
+
+    return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 }
 
 // Function to display status on OLED when button is pressed
@@ -217,17 +222,17 @@ void showStatus() {
         t2Str = "T2: " + String(p1) + "%";
     }
     
-    // Tank 8 Logic
-    String t8Str = "T8: Err";
+    // Tank 3 Logic
+    String t3Str = "T3: Err";
     if (d2 >= 0) {
-        long p2 = map(d2, TANK8_FULL_CM, TANK8_EMPTY_CM, 100, 0);
+        long p2 = map(d2, TANK3_FULL_CM, TANK3_EMPTY_CM, 100, 0);
         p2 = constrain(p2, 0, 100);
-        t8Str = "T8: " + String(p2) + "%";
+        t3Str = "T3: " + String(p2) + "%";
     }
 
     display.setFont(ArialMT_Plain_16);
     display.drawString(64, 20, t2Str);
-    display.drawString(64, 45, t8Str);
+    display.drawString(64, 45, t3Str);
 
     display.display();
     delay(3000); // Show for 3 seconds
@@ -313,7 +318,7 @@ void setup() {
 
 
     // ==========================================
-    // --- Sensor 2 (Tank ID 8) Logic ---
+    // --- Sensor 2 (Tank ID 3) Logic ---
     // ==========================================
     float distance2 = readDistance(TRIGGER_PIN_2, ECHO_PIN_2);
     bool shouldSendZero2 = false;
@@ -321,8 +326,8 @@ void setup() {
 
     if (distance2 < 0) {
         Serial.println("Error reading distance from Sensor 2.");
-        // ถ้าอ่านค่าไม่ได้ ให้ดูประวัติ (Tank 8 Empty ~240)
-        if (lastValidDistance2 > (TANK8_EMPTY_CM - 10)) { // > 230cm
+        // ถ้าอ่านค่าไม่ได้ ให้ดูประวัติ (Tank 3 Empty ~240)
+        if (lastValidDistance2 > (TANK3_EMPTY_CM - 10)) { // > 230cm
             isTankEmpty2 = true;
             shouldSendZero2 = true;
         }
@@ -370,15 +375,15 @@ void setup() {
 
         // --- Sending Data for Sensor 2 ---
         if (shouldSendZero2) {
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, 0);
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, 0);
             smartDelay(random(10000, 20000));
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, 0);
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, 0);
         } else if (shouldSendValue2) {
-            uint8_t percentage2 = map(lastValidDistance2, TANK8_FULL_CM, TANK8_EMPTY_CM, 100, 0);
+            uint8_t percentage2 = map(lastValidDistance2, TANK3_FULL_CM, TANK3_EMPTY_CM, 100, 0);
             percentage2 = constrain(percentage2, 0, 100);
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, percentage2);
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, percentage2);
             smartDelay(random(10000, 20000));
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK8_ID, percentage2);
+            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, percentage2);
         }
     }
 

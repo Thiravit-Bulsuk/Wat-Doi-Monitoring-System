@@ -5,6 +5,7 @@
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
 #include <esp_sleep.h>
+#include "NodeConfig.h"
 
 // Define LoRa settings
 #define LORA_DEVICE DEVICE_SX1262
@@ -30,7 +31,7 @@ const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation se
 const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE_SPD 2
-#define REPEATER_NODE 5
+#define REPEATER_NODE 10
 
 SX126XLT LT;
 
@@ -62,7 +63,7 @@ void showStatus() {
     display.clear();
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 0, "Node 7: SPD");
+    display.drawString(64, 0, "Node 6: SPD");
     
     bool failed = readSPDStatus();
     display.setFont(ArialMT_Plain_24);
@@ -106,30 +107,33 @@ bool readSPDStatus() {
 
 // Function to send data
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t NodeID, uint8_t status) {
-    delay(1000); // Delay before sending
-    uint8_t len;
+    delay(1000);
 
-    Serial.println(status == 1 ? "SPD Failed" : "SPD Working"); // Print SPD status to be sent
-    LT.startWriteSXBuffer(0);       // Start writing to buffer
+    LoRaPacket packet;
+    packet.messageType = MessageType;
+    packet.receiverID = RepeaterNode;
+    packet.senderID = NodeID;
+    packet.sourceNodeID = NodeID;
+    packet.value = status; // ส่งค่าสถานะ (0 หรือ 1)
+    packet.battery = 0.0;
 
-    LT.writeUint8(MessageType);     // Packet type (SPD Status)
-    LT.writeUint8(RepeaterNode);    // ID of Repeater Node
-    LT.writeUint8(NodeID);          // Node ID
-    LT.writeUint8(status);          // SPD status: 1 for bad, 0 for good
+    uint8_t txBuffer[sizeof(LoRaPacket)];
+    memcpy(txBuffer, &packet, sizeof(LoRaPacket)); // Copy struct to byte array
 
-    len = LT.endWriteSXBuffer();    // Close the packet and get length
-    uint8_t TXPacketL = LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX); // Send packet with TXpower
-    if (TXPacketL == 0) {
-        Serial.println("Error: Failed to send data");
-    } else {
-        Serial.println("Data sent successfully");
+    Serial.println(status == 1 ? "SPD Failed" : "SPD Working");
+
+    LT.startWriteSXBuffer(0);
+    for (int i = 0; i < sizeof(LoRaPacket); i++) {
+        LT.writeUint8(txBuffer[i]);
     }
-    return TXPacketL;
+    uint8_t len = LT.endWriteSXBuffer();
+
+    return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 }
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Data Node 7 (NongPog) Initializing...");
+    Serial.println("Data Node 6 (NongPog) Initializing...");
 
     SPI.begin();
     delay(500);
@@ -158,9 +162,9 @@ void setup() {
         uint8_t status = failed ? 1 : 0;  // Convert bool to uint8_t for transmission
         
         // Send SPD status twice (to ensure successful transmission)
-        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 7, status);  
+        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 6, status);  
         delay(random(1000, 5000));  
-        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 7, status);  
+        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 6, status);  
     }
 
     VextOFF();

@@ -6,6 +6,7 @@
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
 #include <esp_sleep.h> // เรียกใช้ Library สำหรับ Deep Sleep
+#include "NodeConfig.h"
 
 // Define LoRa settings
 #define LORA_DEVICE DEVICE_SX1262
@@ -18,9 +19,14 @@
 #define TRIGGER_PIN 6
 #define ECHO_PIN 7
 
+// Battery Measurement Pin (Heltec V3)
+#define ADC_BATTERY_PIN 1
+#define BAT_ADC_CTRL 37 // ขาควบคุมวงจรวัดแบตเตอรี่สำหรับ V3 (ตาม Pinout Map)
+
 // Define Tank Constants (Calibration)
 const int TANK_FULL_CM = 40;
-const int TANK_EMPTY_CM = 450;
+const int TANK_EMPTY_CM = 700;   // ความสูงจริงของแทงก์ (เซ็นเซอร์ถึงก้นแทงก์ 7 เมตร)
+const int SENSOR_LIMIT_CM = 450; // ขีดจำกัดทางกายภาพของเซ็นเซอร์ JSN-SR04T (4.5 เมตร)
 
 const uint32_t Frequency = 923000000;           // Frequency of transmissions
 const uint32_t Offset = 0;                      // Offset frequency for calibration purposes
@@ -30,10 +36,10 @@ const uint8_t SpreadingFactor = LORA_SF12;      // LoRa spreading factor
 const uint8_t CodeRate = LORA_CR_4_5;           // LoRa coding rate
 const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation setting
 
-const int8_t TXpower = 14;                      // LoRa transmit power in dBm
+const int8_t TXpower = 14;                      // ปรับความแรงสูงสุด (22 dBm) เนื่องจากอยู่ไกลมาก
 
 #define MESSAGE_TYPE 1
-#define REPEATER_NODE 5
+#define REPEATER_NODE 10
 
 SX126XLT LT;
 
@@ -60,9 +66,12 @@ RTC_DATA_ATTR int refillConfirmationCount = 0;
 const int REFILL_THRESHOLD = 3;  // ต้องอ่านค่าได้กี่ครั้งถึงจะเชื่อว่าน้ำมาจริง
 
 RTC_DATA_ATTR uint8_t lastPercentage = 100; // ใช้ RTC_DATA_ATTR เพื่อจำค่าตอน Deep Sleep
+RTC_DATA_ATTR bool hasSentInitialZero = false; // ส่ง 0% ครั้งแรกเมื่อยังไม่มีประวัติ (ป้องกัน Comm Error)
+float globalBatteryVoltage = 0.0; // เก็บค่าแบตเตอรี่ที่วัดได้ตอนเริ่มระบบ
 
 // Forward declaration
 float readDistance();
+float readBatteryVoltage();
 
 // Function to initialize LoRa module
 bool initLoRa() {
@@ -88,26 +97,30 @@ void showStatus() {
     display.drawString(64, 20, "Measuring...");
     display.display();
 
-    float distance = readDistance();
-    Serial.print("Manual Read Distance: "); Serial.println(distance);
+    float d = readDistance();
+    Serial.print("Manual Read Distance: "); Serial.println(d);
 
     display.clear();
     display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 0, "Node 3: ThamYai");
-    display.setFont(ArialMT_Plain_24);
+    display.drawString(64, 0, "Node 4: ThamYai");
 
-    if (distance < 0) {
+    // ใช้ค่าแบตเตอรี่ที่วัดไว้ตอนเริ่ม setup
+    display.setFont(ArialMT_Plain_16); // เปลี่ยน Font สำหรับแสดงแบตเตอรี่
+    display.drawString(64, 40, "Bat: " + String(globalBatteryVoltage, 2) + "V"); 
+
+    // แสดงสถานะระดับน้ำ
+    if (d < 0) {
         display.drawString(64, 20, "Error");
     } else {
-        long calc_percentage = map(distance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 37);
+        long calc_percentage = map(d, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0);
         calc_percentage = constrain(calc_percentage, 0, 100);
         uint8_t percentage = (uint8_t)calc_percentage;
         lastPercentage = percentage;
-        display.drawString(64, 20, String(percentage) + " %");
+        display.drawString(64, 20, String(percentage) + " %"); // แสดงเปอร์เซ็นต์น้ำ
     }
 
-    display.setFont(ArialMT_Plain_10);
-    display.drawString(64, 50, "System Working");
+    display.setFont(ArialMT_Plain_10); // กลับไปใช้ Font เล็กสำหรับข้อความสถานะ
+    display.drawString(64, 55, "System Working"); // แสดง System Working ด้านล่างสุด
     display.display();
     delay(3000); // Show for 3 seconds
     display.clear();
@@ -154,8 +167,8 @@ float readDistance() {
             long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
             float dist = (duration * 0.0343) / 2;
             
-            // กรอง Noise ระยะสั้น (<25cm) หรือ Timeout (0) ให้เป็น Error
-            if (duration == 0 || dist < 25.0) { 
+            // กรอง Noise ระยะสั้น (<25cm) หรือไกลเกินขีดจำกัด (450cm) หรือ Timeout (0) ให้เป็น Error
+            if (duration == 0 || dist < 25.0 || dist > SENSOR_LIMIT_CM) { 
                 errorCount++;
             } else {
                 validReadings[validCount++] = dist;
@@ -224,31 +237,59 @@ float readDistance() {
     return -1.0; // ถ้าลองครบแล้วยังไม่ได้ผล ให้คืนค่า Error
 }
 
+// Function to read battery voltage
+float readBatteryVoltage() {
+    // เปิดวงจรวัดแบตเตอรี่ (GPIO 37 ต้องเป็น HIGH เพื่อให้กระแสไหลผ่านวงจรแบ่งแรงดัน)
+    pinMode(BAT_ADC_CTRL, OUTPUT);
+    digitalWrite(BAT_ADC_CTRL, HIGH); 
+    delay(10); // รอให้แรงดันไฟนิ่ง
+
+    uint16_t raw = analogRead(ADC_BATTERY_PIN);
+
+    // ปิดวงจรวัดแบตเตอรี่ทันทีเพื่อประหยัดไฟ
+    digitalWrite(BAT_ADC_CTRL, LOW); 
+
+    Serial.print("Raw ADC: "); Serial.println(raw);
+    float batteryVoltage = raw * (3.3 / 4095.0) * 4.9; 
+    Serial.print("Calculated Battery Voltage: "); Serial.println(batteryVoltage, 2);
+
+    // สูตรคำนวณ: ค่าดิบ * (แรงดันอ้างอิง / ความละเอียด) * อัตราส่วนตัวต้านทาน (4.9 สำหรับ V3)
+    return batteryVoltage;
+}
+
 // Function to send data
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint8_t percentage) {
     smartDelay(1000); // Use smartDelay to allow button check
-    uint8_t len;
+
+    LoRaPacket packet;
+    packet.messageType = MessageType;
+    packet.receiverID = RepeaterNode;
+    packet.senderID = tankID;
+    packet.sourceNodeID = tankID;
+    packet.value = percentage;
+    packet.battery = globalBatteryVoltage; // ใช้ค่าแบตเตอรี่ที่วัดไว้ตอนเริ่ม
+
+    uint8_t txBuffer[sizeof(LoRaPacket)];
+    memcpy(txBuffer, &packet, sizeof(LoRaPacket)); // Copy struct to byte array
+
     Serial.print("Sending Data: TankID="); Serial.print(tankID); Serial.print(", %="); Serial.println(percentage);
-    LT.startWriteSXBuffer(0);       // Start writing to buffer
-
-    LT.writeUint8(MessageType);     // Packet type
-    LT.writeUint8(RepeaterNode);    // Repeater Node ID
-    LT.writeUint8(tankID);          // Tank ID
-    LT.writeUint8(percentage);      // Data to be sent (percentage)
-
-    len = LT.endWriteSXBuffer();    // Close the packet and get length
-    uint8_t TXPacketL = LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX); // Send packet with TXpower
-    if (TXPacketL == 0) {
-        Serial.println("Error: Failed to send data");
-    } else {
-        Serial.println("Data sent successfully");
+    
+    LT.startWriteSXBuffer(0);
+    for (int i = 0; i < sizeof(LoRaPacket); i++) {
+        LT.writeUint8(txBuffer[i]);
     }
-    return TXPacketL;
+    uint8_t len = LT.endWriteSXBuffer();
+
+    return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 }
 
 void setup() {
     Serial.begin(115200);
     Serial.println("Data Node 3 (ThamYai) Initializing...");
+
+    // 1. วัดแบตเตอรี่ทันทีที่ตื่น (ก่อนโหลดหนักอย่าง OLED/LoRa จะทำงาน)
+    globalBatteryVoltage = readBatteryVoltage();
+    Serial.print("Initial Battery Voltage: "); Serial.println(globalBatteryVoltage, 2);
 
     SPI.begin();
     delay(500);
@@ -272,9 +313,23 @@ void setup() {
     // Layer 2: Sanity Check & History
     if (distance < 0) {
         Serial.println("Result: Error (-1)");
-        // ถ้าอ่านค่าไม่ได้ ให้ดูประวัติ
-        if (lastValidDistance > (TANK_EMPTY_CM - 50)) {
-            Serial.println("History says Empty. Confirming 0%.");
+        // ถ้าเดิมถูกมาร์คว่า Empty อยู่แล้ว ให้ยังส่ง 0% ต่อไป
+        if (isTankEmpty) {
+            Serial.println("Previously marked empty — keep sending 0%.");
+            shouldSendZero = true;
+        }
+        // ถ้าอ่านค่าไม่ได้ ให้พิจารณาตามประวัติ
+        // กรณีที่ยังไม่มีประวัติจริง (ค่าเริ่มต้นยังเป็น TANK_FULL_CM) และเป็น Error ครั้งแรก
+        // ให้ส่ง 0% ครั้งแรกเพื่อไม่ให้ Master ตีเป็น Comm Error
+        else if (!hasSentInitialZero && lastValidDistance == TANK_FULL_CM) {
+            Serial.println("No history and first read error. Sending initial 0% to indicate empty.");
+            isTankEmpty = true;
+            shouldSendZero = true;
+            hasSentInitialZero = true;
+        }
+        // กรณีที่ประวัติระบุว่าน้ำอยู่ต่ำกว่าช่วงเซ็นเซอร์ -> ส่ง 0%
+        else if (lastValidDistance > (SENSOR_LIMIT_CM - 30)) { 
+            Serial.println("Water below sensor range (> 4.5m). Reporting 0% for safety.");
             isTankEmpty = true;
             shouldSendZero = true;
         } else {
@@ -318,23 +373,23 @@ void setup() {
     // Action based on Logic
     if (shouldSendZero) {
         lastPercentage = 0;
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 3, 0);
+        sendData(MESSAGE_TYPE, REPEATER_NODE, 4, 0);
         int randomDelay1 = random(10000, 20000);
         smartDelay(randomDelay1);
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 3, 0);
+        sendData(MESSAGE_TYPE, REPEATER_NODE, 4, 0);
     } else if (shouldSendValue) {
-        long calc_percentage = map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 37); 
+        long calc_percentage = map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0); 
         calc_percentage = constrain(calc_percentage, 0, 100);   // Constrain between 0 and 100
         uint8_t percentage = (uint8_t)calc_percentage;          // Cast to uint8_t
         Serial.print("Calculated Percentage: "); Serial.println(percentage);
         lastPercentage = percentage;
         Serial.println("Sending Packet 1...");
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 3, percentage);
+        sendData(MESSAGE_TYPE, REPEATER_NODE, 4, percentage);
         int randomDelay1 = random(10000, 20000);  
         Serial.print("Waiting random delay: "); Serial.println(randomDelay1);
         smartDelay(randomDelay1);
         Serial.println("Sending Packet 2...");
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 3, percentage);
+        sendData(MESSAGE_TYPE, REPEATER_NODE, 4, percentage);
     }
     } // End LoRa block
 

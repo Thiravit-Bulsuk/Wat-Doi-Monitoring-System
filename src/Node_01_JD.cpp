@@ -4,6 +4,7 @@
 #include <SX126XLT.h>
 #include <ProgramLT_Definitions.h>
 #include <esp_sleep.h>
+#include "NodeConfig.h"
 #include "Arduino.h"
 
 // Define LoRa settings
@@ -32,7 +33,7 @@ const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation se
 const int8_t TXpower = 2;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE 1
-#define REPEATER_NODE 5
+#define REPEATER_NODE 10
 
 SX126XLT LT;
 
@@ -226,23 +227,27 @@ float readDistance() {
 // Function to send data
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint8_t percentage) {
     smartDelay(1000); // Use smartDelay to allow button check
-    uint8_t len;
+
+    LoRaPacket packet;
+    packet.messageType = MessageType;
+    packet.receiverID = RepeaterNode;
+    packet.senderID = tankID;    // สำหรับ Data Node, senderID กับ sourceNodeID คือตัวเดียวกัน
+    packet.sourceNodeID = tankID;
+    packet.value = percentage;
+    packet.battery = 0.0;        // หากยังไม่ได้ต่อเซ็นเซอร์วัดแบต ให้ใส่ 0 ไว้ก่อน
+
+    uint8_t txBuffer[sizeof(LoRaPacket)];
+    memcpy(txBuffer, &packet, sizeof(LoRaPacket)); // Copy struct to byte array
+
     Serial.print("Sending Data: TankID="); Serial.print(tankID); Serial.print(", %="); Serial.println(percentage);
-    LT.startWriteSXBuffer(0);       // Start writing to buffer
-
-    LT.writeUint8(MessageType);     // Packet type
-    LT.writeUint8(RepeaterNode);    // Repeater Node ID
-    LT.writeUint8(tankID);          // Tank ID
-    LT.writeUint8(percentage);      // Data to be sent (percentage)
-
-    len = LT.endWriteSXBuffer();  // Close the packet and get length
-    uint8_t TXPacketL = LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX); // Send packet with TXpower
-    if (TXPacketL == 0) {
-        Serial.println("Error: Failed to send data");
-    } else {
-        Serial.println("Data sent successfully");
+    
+    LT.startWriteSXBuffer(0);
+    for (int i = 0; i < sizeof(LoRaPacket); i++) {
+        LT.writeUint8(txBuffer[i]);
     }
-    return TXPacketL;
+    uint8_t len = LT.endWriteSXBuffer();
+
+    return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 }
 
 void setup() {
