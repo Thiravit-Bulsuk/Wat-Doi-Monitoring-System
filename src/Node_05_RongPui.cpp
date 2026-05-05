@@ -24,8 +24,8 @@
 #define BAT_ADC_CTRL 37 // ขาควบคุมวงจรวัดแบตเตอรี่สำหรับ V3 (ตาม Pinout Map)
 
 // Define Tank Constants (Calibration)
-const int TANK_FULL_CM = 60;
-const int TANK_EMPTY_CM = 500;   // ความสูงจริงของแทงก์ (เซ็นเซอร์ถึงก้นแทงก์ 7 เมตร)
+const int TANK_FULL_CM = 82;
+const int TANK_EMPTY_CM = 500;   // ความสูงจริงของแทงก์ (เซ็นเซอร์ถึงก้นแทงก์ 5 เมตร)
 const int SENSOR_LIMIT_CM = 450; // ขีดจำกัดทางกายภาพของเซ็นเซอร์ JSN-SR04T (4.5 เมตร)
 
 const uint32_t Frequency = 923000000;           // Frequency of transmissions

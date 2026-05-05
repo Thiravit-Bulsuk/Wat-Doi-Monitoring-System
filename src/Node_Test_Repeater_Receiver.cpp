@@ -13,7 +13,7 @@
 // Define LoRa settings
 #define LORA_DEVICE DEVICE_SX1262
 #define NSS 8
-#define NRESET 12
+#define NRESET 12                                                    
 #define RFBUSY 13
 #define DIO1 14
 

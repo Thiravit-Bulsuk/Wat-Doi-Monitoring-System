@@ -152,13 +152,13 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #define RELAY_PIN_3 5
 #define RELAY_PIN_4 4
 
-#define RESET_BUTTON_PIN 47
+#define RESET_BUTTON_PIN 1  // ย้ายจาก 47 มาขา 1 เนื่องจากขา 47 เสีย
 #define LONG_PRESS_DURATION 2000  // กำหนดเวลาการกดค้าง (2 วินาที)
 
 WiFiMulti wifiMulti;
 
-#define WIFI_SSID  "SolarCell" // "iPhone" // WiFi Name
-#define WIFI_PASSWORD "12345678" // WiFi Password
+#define WIFI_SSID   "SolarCell" //  "iPhone" // WiFi Name
+#define WIFI_PASSWORD  "12345678" // WiFi Password
 
 #define ONE_DAY_INTERVAL 43200000 // 1/2 วันใน milliseconds (12 * 60 * 60 * 1000)
 
@@ -178,12 +178,12 @@ SX126XLT LT;
 
 // การตั้งค่า Node ทั้งหมดในระบบ (เพิ่ม Node 8, 9, 10 ได้ที่นี่)
 Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
-    {1, "JD",       "JD",       50, RELAY_PIN_1, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {2, "PhraNon",  "PhraNon",  50, RELAY_PIN_2, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, 0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {6, "NongPog",  "NongPog",  0,  0,           MSG_TYPE_SPD,   0, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0}
+    {1, "JD",       "JD",       50, RELAY_PIN_1, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {2, "PhraNon",  "PhraNon",  50, RELAY_PIN_2, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {6, "NongPog",  "NongPog",  0,  0,           MSG_TYPE_SPD,   -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0}
     // สามารถเพิ่ม Node ใหม่ได้ที่นี่ เช่น {9, "Tank9", "Tank9", 50, 0, MSG_TYPE_WATER, 0, 0, STATE_NORMAL, STATE_NORMAL, 0}
 };
 const int numNodes = sizeof(nodes) / sizeof(nodes[0]);
@@ -295,15 +295,6 @@ void ResetTimerTask(void *parameter) {
     }
 }
 
-void IRAM_ATTR handleButtonPress() {
-    if (digitalRead(RESET_BUTTON_PIN) == LOW) {
-        buttonPressed = true;               // ปุ่มถูกกด
-        buttonPressTime = millis();         // บันทึกเวลาที่กดปุ่ม
-    } else {
-        buttonPressed = false;              // ปุ่มถูกปล่อย
-    }
-}
-
 // Function to initialize LoRa module
 bool initLoRa() {
     if (!LT.begin(NSS, NRESET, RFBUSY, DIO1, LORA_DEVICE)) {
@@ -404,20 +395,33 @@ void activateRelay(uint8_t nodeID) {
         return;
     }
 
+    String tankName = "Unknown";
+    for (int i = 0; i < numNodes; i++) {
+        if (nodes[i].id == nodeID) {
+            tankName = nodes[i].name;
+            break;
+        }
+    }
+
     switch (nodeID) {
         case 1:
+            Serial.println("DEBUG: [RELAY ON] Pin " + String(RELAY_PIN_1) + " (JD) - Reason: " + tankName + " water level < threshold");
             digitalWrite(RELAY_PIN_1, LOW);  // JD
             break;
         case 2:
+            Serial.println("DEBUG: [RELAY ON] Pin " + String(RELAY_PIN_2) + " (PhraNon) - Reason: " + tankName + " water level < threshold");
             digitalWrite(RELAY_PIN_2, LOW);  // Phranon
             break;
         case 4:
+            Serial.println("DEBUG: [RELAY ON] Pin " + String(RELAY_PIN_3) + " (ThamYai) - Reason: " + tankName + " water level < threshold");
             digitalWrite(RELAY_PIN_3, LOW);  // ThamYai
             break;
         case 5:
+            Serial.println("DEBUG: [RELAY ON] Pin " + String(RELAY_PIN_4) + " (RongPui) - Reason: " + tankName + " water level < threshold");
             digitalWrite(RELAY_PIN_4, LOW);  // RongPui
             break;
         default:
+            Serial.println("DEBUG: [RELAY SKIP] Node ID " + String(nodeID) + " has no assigned relay.");
             break;
     }
 }
@@ -430,6 +434,7 @@ void resetNotification() {
         nodes[i].lowCount = 0;
     }
 
+    Serial.println("DEBUG: [RELAY OFF] All Pins (1-4) - Reason: Manual Reset or System Init");
     digitalWrite(RELAY_PIN_1, HIGH);
     digitalWrite(RELAY_PIN_2, HIGH);
     digitalWrite(RELAY_PIN_3, HIGH);
@@ -493,8 +498,10 @@ void DisplayTimerTask(void *pvParameters) {
                 Node &n = nodes[activeNodeIdx];
                 if (n.commState == STATE_COMM_ERROR) {
                     displayData(n.name, "CommError");
+                } else if (n.lastValue == -1) {
+                    displayData(n.name, "Waiting...");
                 } else if (n.msgType == MSG_TYPE_SPD) {
-                    displayData(n.name, n.lastValue == 0 ? "Working" : "Failed");
+                    displayData(n.name, n.lastValue == 0 ? "SPD OK" : "SPD XX");
                 } else {
                     displayData(n.name, String(n.lastValue) + " %");
                 }
@@ -631,9 +638,7 @@ void setup() {
     pinMode(RELAY_PIN_4, OUTPUT);
 
     pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);  // ตั้งค่าปุ่มรีเซ็ตเป็น INPUT_PULLUP
-
-    // ตั้งค่า Interrupt เมื่อปุ่มมีการเปลี่ยนแปลงสถานะ
-    attachInterrupt(digitalPinToInterrupt(RESET_BUTTON_PIN), handleButtonPress, CHANGE);
+    pinMode(35, OUTPUT);                      // LED สีขาวบนบอร์ด Heltec V3 (Visual Feedback)
 
     digitalWrite(RELAY_PIN_1, HIGH);
     digitalWrite(RELAY_PIN_2, HIGH);
@@ -645,6 +650,12 @@ void setup() {
 
     // 1. เคลียร์ค่าและแสดงหน้าจอ RESET ให้จบกระบวนการ (5 วินาที)
     resetNotification();
+
+    // แสดงหน้าจอ Waiting สำหรับแต่ละโหนดเมื่อเปิดเครื่อง เพื่อให้ทราบสถานะเริ่มต้น
+    for (int i = 0; i < numNodes; i++) {
+        displayData(nodes[i].name, "Waiting...");
+        delay(1000);
+    }
 
     // 2. หลังจาก Reset จบแล้ว ค่อยเริ่ม Task วนแสดงผลระดับน้ำ เพื่อไม่ให้หน้าจอซ้อนกัน
     xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
@@ -685,23 +696,37 @@ void setup() {
 // Task for Button Logic (Separated for responsiveness)
 void ButtonTask(void *parameter) {
     for (;;) {
-        // ตรวจสอบว่าปุ่มถูกกดและค้างไว้นานกว่า LONG_PRESS_DURATION หรือไม่
-        if (buttonPressed && (millis() - buttonPressTime >= LONG_PRESS_DURATION)) {
-            if (!resetTriggered) {
-                Serial.println("Long press detected! Resetting notifications.");
-                vTaskSuspend(TaskDisplay);      // หยุด Task แสดงผลชั่วคราว
-                resetNotification();            // เรียกใช้ฟังก์ชันรีเซ็ตการแจ้งเตือน
-                vTaskDelay(100 / portTICK_PERIOD_MS); // หน่วงเวลาเล็กน้อย
-                vTaskResume(TaskDisplay);       // ให้ Task แสดงผลกลับมาทำงานต่อ
-                resetTriggered = true;          // ป้องกันการเรียกซ้ำ
-            }
-        }
+        bool isPressed = (digitalRead(RESET_BUTTON_PIN) == LOW); // ทำงานร่วมกับ RC Filter 2k/4.7uF
 
-        // ถ้าปุ่มถูกปล่อยแล้วรีเซ็ตการตรวจจับ
-        if (!buttonPressed && resetTriggered) {
-            resetTriggered = false;  // รีเซ็ตสถานะการทำงานของรีเซ็ต
+        // ให้ไฟขาว (Pin 35) ติดเวลากดปุ่ม และดับเมื่อปล่อย
+        digitalWrite(35, isPressed ? HIGH : LOW);
+
+        if (isPressed) {
+            if (!buttonPressed) {
+                vTaskDelay(50 / portTICK_PERIOD_MS); // Software Debounce ซ้ำอีกชั้น
+                if (digitalRead(RESET_BUTTON_PIN) == LOW) {
+                    buttonPressed = true;
+                    buttonPressTime = millis();
+                    Serial.println("DEBUG: Button Pressed (Pin 1 - Protected)");
+                }
+            } else {
+                // ตรวจสอบว่ากดค้างนานพอหรือยัง
+                if (!resetTriggered && (millis() - buttonPressTime >= LONG_PRESS_DURATION)) {
+                    Serial.println("DEBUG: Long press confirmed! Executing reset...");
+                    vTaskSuspend(TaskDisplay);      
+                    resetNotification();            
+                    vTaskResume(TaskDisplay);       
+                    resetTriggered = true;          
+                }
+            }
+        } else {
+            if (buttonPressed) {
+                Serial.println("DEBUG: Button Released");
+            }
+            buttonPressed = false;
+            resetTriggered = false;
         }
-        vTaskDelay(50 / portTICK_PERIOD_MS); // Check every 50ms
+        vTaskDelay(50 / portTICK_PERIOD_MS); 
     }
 }
 
@@ -782,6 +807,7 @@ void MainTask(void *parameter) {
             if (mqttDisableNotifications) {
                 notificationsEnabled = false;
                 
+                Serial.println("DEBUG: [RELAY OFF] All Pins (1-4) - Reason: MQTT Command (Disable Notifications)");
                 // Turn off all relays immediately
                 digitalWrite(RELAY_PIN_1, HIGH);
                 digitalWrite(RELAY_PIN_2, HIGH);
