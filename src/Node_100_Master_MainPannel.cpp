@@ -360,7 +360,7 @@ void receiveData() {
                         if (nodes[i].lastValue < nodes[i].threshold) {
                             nodes[i].lowCount++;
                             if (nodes[i].lowCount >= LOW_THRESHOLD && nodes[i].alertState == STATE_NORMAL) {
-                                sendLineMessage("แท็งค์ " + nodes[i].name + " น้ำเหลือต่ำกว่า " + String(nodes[i].threshold) + "% !!!");
+                                sendLineMessage("แจ้งเตือน: แท็งค์ " + nodes[i].name + " น้ำเหลือต่ำกว่า " + String(nodes[i].threshold) + "%");
                                 activateRelay(nodes[i].id);
                                 nodes[i].alertState = STATE_LOW_WATER;
                             }
@@ -374,7 +374,7 @@ void receiveData() {
                     // Logic สำหรับ SPD
                     else if (nodes[i].msgType == MSG_TYPE_SPD) {
                         if (nodes[i].lastValue == 1 && nodes[i].alertState == STATE_NORMAL) {
-                            sendLineMessage("SPD " + nodes[i].name + " หมดสภาพแล้ว ตรวจสอบด่วน!!!");
+                            sendLineMessage("แจ้งเตือน: SPD " + nodes[i].name + " หมดสภาพแล้ว โปรดตรวจสอบ");
                             nodes[i].alertState = STATE_LOW_WATER;
                         }
                     }
@@ -529,7 +529,7 @@ void CheckCommError() {
         for (int i = 0; i < numNodes; i++) {
             if (currentMillis - nodes[i].lastSeen >= commTimeout && nodes[i].commState == STATE_NORMAL) {
                 if (!isRepeaterDown) {
-                    sendLineMessage("การสื่อสารขัดข้อง!!! ตรวจสอบ DataNode " + nodes[i].name);
+                    sendLineMessage("แจ้งเตือน: การสื่อสารขัดข้องที่ DataNode " + nodes[i].name);
                 }
                 nodes[i].commState = STATE_COMM_ERROR;
             }
