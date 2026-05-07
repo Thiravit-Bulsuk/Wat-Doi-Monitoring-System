@@ -7,7 +7,7 @@
 โปรเจกต์นี้พัฒนาขึ้นเพื่อแก้ปัญหาการตรวจสอบระดับน้ำในแท็งค์ที่กระจายตัวอยู่ตามจุดต่างๆ บนภูเขา และตรวจสอบสถานะของอุปกรณ์ป้องกันฟ้าผ่า (SPD) โดยใช้เทคโนโลยี **LoRa (Long Range)** ในการสื่อสารระยะไกลที่ประหยัดพลังงาน
 
 ### โครงสร้างการทำงาน (Architecture)
-1.  **Data Nodes (Nodes 1, 2, 3, 4, 5, 6):**
+1.  **Data Nodes (Nodes 1, 2, 4, 5, 6):**
     *   ติดตั้ง ณ จุดวัดต่างๆ (แท็งค์น้ำ, ตู้ไฟ)
     *   อ่านค่าจากเซ็นเซอร์ (Ultrasonic หรือ Dry Contact)
     *   ส่งข้อมูลผ่าน LoRa ไปยัง Repeater
@@ -27,10 +27,10 @@
 
 ## 🛠️ ฮาร์ดแวร์ที่ต้องใช้ (Hardware Requirements)
 
-*   **Microcontroller:** Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262) จำนวน 7 บอร์ด
+*   **Microcontroller:** Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262) จำนวน 7 ชุด
 *   **Sensors:**
     *   **Ultrasonic JSN-SR04T (Waterproof):** สำหรับวัดระดับน้ำ (Node 1, 2, 3, 4)
-    *   **Dry Contact / Switch:** สำหรับเช็คสถานะ SPD (Node 7)
+    *   **Dry Contact / Switch:** สำหรับเช็คสถานะ SPD (Node 6)
 *   **Display:** OLED 0.96" (Built-in บนบอร์ด Heltec)
 *   **Actuators:** Relay Module 4 Channels (Active Low) ต่อกับ Master Node
 *   **Power Supply:**
@@ -48,11 +48,11 @@
 *   **Sensor 1 (Tank 2):** Trigger GPIO 6, Echo GPIO 7
 *   **Sensor 2 (Tank 8):** Trigger GPIO 4, Echo GPIO 5
 
-#### 📍 Data Node 7 (SPD)
+#### 📍 Data Node 6 (NongPog - SPD)
 *   **SPD Status Pin:** GPIO 4 (ต่อแบบ Input Pull-up)
-    *   Note: สามารถตั้งค่า Logic (NO/NC) ได้ในไฟล์ Node_06_SPD_NongPog.cpp
+    *   Note: สามารถตั้งค่า Logic (NO/NC) ได้ในไฟล์ `Node_06_SPD_NongPog.cpp`
 
-#### 📍 Master Node 6
+#### 📍 Master Node 100
 *   **Relays:**
     *   Relay 1: GPIO 7
     *   Relay 2: GPIO 6
@@ -94,8 +94,45 @@ const int mqtt_port = 8883;
 // LINE Notify Token
 const char* LINE_ACCESS_TOKEN = "Vv9JoO8Af3WbpW3iozJEmzXj0IdGRVHruYM1TE6umoFn5OWqTDelb05Pm0oah8FmHV/lDx0pmmLDm5HZ6umXSWJV8zrmh4c8wtpZcCLObqdUWqPdOYN1XKG+GoPN0A6BBW+fNXY/s2AEJA1HQR1HkQdB04t89/1O/w1cDnyilFU=";
 const char* LINE_USER_ID = "C193952f60a4c2951926955db63570e03";
+```
 
-+#### MQTT Root CA Certificate (ISRG Root X1) +สำหรับการเชื่อมต่อผ่าน TLS (Port 8883) จำเป็นต้องระบุ Root CA ในโค้ด Master_Node_6_MainPannel.cpp เพื่อใช้ตรวจสอบความปลอดภัยของ Broker: + +cpp +static const char *root_ca PROGMEM = R"EOF( +-----BEGIN CERTIFICATE----- +MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw +TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh +cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4 +WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu +ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY +MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc +h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+ +0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U +A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW +T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH +B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC +B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv +KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn +OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn +jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw +qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI +rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV +HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq +hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL +ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ +3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK +NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5 +ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur +TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC +jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc +oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq +4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA +mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d +emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc= +-----END CERTIFICATE----- +)EOF"; + +
+#### MQTT Root CA Certificate (ISRG Root X1)
+สำหรับการเชื่อมต่อผ่าน TLS (Port 8883) จำเป็นต้องระบุ Root CA ในโค้ด เพื่อใช้ตรวจสอบความปลอดภัยของ Broker:
+
+```cpp
+static const char *root_ca PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----
+)EOF";
 
 ```
 
