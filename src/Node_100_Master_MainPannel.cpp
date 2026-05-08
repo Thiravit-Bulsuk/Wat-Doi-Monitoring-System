@@ -1,19 +1,3 @@
-// ใช้ได้ดี ทดสอบ linemessaging API แล้วใช้ได้ 
-//แก้ไขหน้าจอทับซ้อนเวลาเน็ตหลุด แก้ไขหน้าจอแสดงผลตลอดเวลาทำให้หน้าจอหมอง
-// แก้ไข การแจ้งเตือนเมื่อเซ็นเซอร์ทำงานผิดพลาด โดยให้มีการนับ หากน้ำต่ำกว่าครึ่งแทงค์ถึงสามครั้งจึงจะแจ้งเตือน 
-// แก้ไขไฟลล์ให้เป็นไปตามมาตรฐาน C++11 เปลี่ยนนามสกุล .ino เป็น .cpp เพิ่มการ declare ฟังก์ชันข้างบน main code
-// disable auto reset function for testing purpose
-//  ลดความสว่างหน้าจอเหลือ 150
-
-/*
-
-เพิ่ม Topic ชื่อ request_data
-เมื่อคุณกดปุ่มบนมือถือให้ส่งค่า 1 มาที่ Topic นี้
-Master Node จะตรวจจับได้และทำการ Publish ข้อมูลเซ็นเซอร์ทุกตัวออกมาทันทีครับ  
-
-*/
-
-
 #include <SPI.h>  
 #include <SimpleTimer.h>
 #include <Wire.h>
@@ -457,6 +441,8 @@ void resetNotification() {
         nodes[i].lowCount = 0;
     }
     repeaterErrorActive = false;
+    suspectedCommTime = 0;         // ล้างเวลาที่กำลังรอสังเกตการณ์ทิ้งด้วย
+    lastRepeaterRecoveryTime = 0;  // ล้างช่วงเวลาพักการแจ้งเตือน (Grace Period) เพื่อให้พร้อมรับข้อมูลใหม่ทันที
 
     Serial.println("DEBUG: [RELAY OFF] All Pins (1-4) - Reason: Manual Reset or System Init");
     digitalWrite(RELAY_PIN_1, HIGH);
