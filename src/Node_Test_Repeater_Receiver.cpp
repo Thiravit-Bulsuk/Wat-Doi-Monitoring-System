@@ -78,7 +78,7 @@ void DisplayTask(void *parameter) {
                 VextOFF();
             } else {
                 display.clear();
-                display.drawString(0, 0, "Test Repeater 10 (Live)");
+                display.drawString(0, 0, "Test Repeater 101 (Live)");
                 display.drawString(0, 13, "St: " + logStatus);
                 display.drawString(0, 26, "Pkt: " + logLastPacket);
                 display.drawString(0, 39, "Act: " + logAction);
@@ -159,7 +159,7 @@ void onReceive(uint8_t ThisNode) { // MasterNode parameter is not needed here
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Test Repeater Receiver (Node 10) Initializing...");
+    Serial.println("Test Repeater Receiver (Node 101) Initializing...");
 
     SPI.begin();
     delay(500);
@@ -178,5 +178,5 @@ void setup() {
 
 void loop() {
     logStatus = "Listening...";
-    onReceive(10); // ThisNode is 10
+    onReceive(101); // ThisNode is 101
 }

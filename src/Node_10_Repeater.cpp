@@ -74,7 +74,7 @@ void DisplayTask(void *parameter) {
                 VextOFF();
             } else {
                 display.clear();
-                display.drawString(0, 0, "Repeater Node 10 (Live)");
+                display.drawString(0, 0, "Repeater Node 101 (Live)");
                 display.drawString(0, 13, "St: " + logStatus);
                 display.drawString(0, 26, "Pkt: " + logLastPacket);
                 display.drawString(0, 39, "Act: " + logAction);
@@ -187,7 +187,7 @@ void onReceive(uint8_t MasterNode, uint8_t ThisNode) {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Repeater Node 10 Initializing...");
+    Serial.println("Repeater Node 101 Initializing...");
 
     SPI.begin();
     delay(500);
@@ -207,5 +207,5 @@ void setup() {
 
 void loop() {
     logStatus = "Listening...";
-    onReceive(100, 10);
+    onReceive(100, 101);
 }

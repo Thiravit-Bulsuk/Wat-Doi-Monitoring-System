@@ -7,16 +7,16 @@
 โปรเจกต์นี้พัฒนาขึ้นเพื่อแก้ปัญหาการตรวจสอบระดับน้ำในแท็งค์ที่กระจายตัวอยู่ตามจุดต่างๆ บนภูเขา และตรวจสอบสถานะของอุปกรณ์ป้องกันฟ้าผ่า (SPD) โดยใช้เทคโนโลยี **LoRa (Long Range)** ในการสื่อสารระยะไกลที่ประหยัดพลังงาน
 
 ### โครงสร้างการทำงาน (Architecture)
-1.  **Data Nodes (Nodes 1, 2, 4, 5, 6):**
+1.  **Data Nodes (Nodes 1, 2, 4, 5, 6, 7, 8, 20):**
     *   ติดตั้ง ณ จุดวัดต่างๆ (แท็งค์น้ำ, ตู้ไฟ)
     *   อ่านค่าจากเซ็นเซอร์ (Ultrasonic หรือ Dry Contact)
     *   ส่งข้อมูลผ่าน LoRa ไปยัง Repeater
-    *   ทำงานในโหมด **Deep Sleep** เพื่อประหยัดพลังงาน (ตื่นมาส่งข้อมูลทุก 5 นาที)
-2.  **Repeater Node (Node 10):**
+    *   ทำงานในโหมด **Deep Sleep** เพื่อประหยัดพลังงาน (ตื่นมาส่งข้อมูลทุก 5 นาทีโดยประมาณ)
+2.  **Repeater Node (Node 101):**
     *   ติดตั้ง ณ จุดกึ่งกลางที่รับสัญญาณได้ดี
     *   ทำหน้าที่รับช่วงต่อสัญญาณ (Relay) จาก Data Nodes ส่งไปยัง Master Node
     *   ทำงานตลอดเวลา (Always On)
-3.  **Master Node (Node 100):**
+3.  **Master Node (Node 100):** 
     *   ติดตั้ง ณ สำนักงาน/กุฏิ
     *   รับข้อมูลจาก Repeater แสดงผลบนหน้าจอ OLED
     *   เชื่อมต่อ WiFi เพื่อส่งข้อมูลขึ้น **MQTT Broker** (HiveMQ)
@@ -28,9 +28,10 @@
 ## 🛠️ ฮาร์ดแวร์ที่ต้องใช้ (Hardware Requirements)
 
 *   **Microcontroller:** Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262) จำนวน 7 ชุด
+    *   **หมายเหตุ:** จำนวน 7 ชุดนี้อาจหมายถึงประเภทของ Node แต่หากนับตาม Node ID ที่ใช้งานจริง (Master, Repeater, Data Nodes 1, 2/3, 4, 5, 6, 7, 8, 20) จะใช้ทั้งหมด 10 ชุด
 *   **Sensors:**
-    *   **Ultrasonic JSN-SR04T (Waterproof):** สำหรับวัดระดับน้ำ (Node 1, 2, 3, 4)
-    *   **Dry Contact / Switch:** สำหรับเช็คสถานะ SPD (Node 6)
+    *   **Ultrasonic JSN-SR04T (Waterproof):** สำหรับวัดระดับน้ำ (Node 1, 2, 4, 5, 6, 7, 8)
+    *   **Dry Contact / Switch:** สำหรับเช็คสถานะ SPD (Node 20)
 *   **Display:** OLED 0.96" (Built-in บนบอร์ด Heltec)
 *   **Actuators:** Relay Module 4 Channels (Active Low) ต่อกับ Master Node
 *   **Power Supply:**
@@ -38,8 +39,7 @@
     *   Adapter 5V USB-C (สำหรับ Repeater และ Master Node)
 
 ### 🔌 การต่อวงจร (Pinout Configuration)
-
-#### 📍 Data Nodes (1, 3, 4) - Ultrasonic เดี่ยว
+#### 📍 Data Nodes (1, 4, 5, 6, 7, 8) - Ultrasonic เดี่ยว
 *   **Trigger Pin:** GPIO 6
 *   **Echo Pin:** GPIO 7
 *   **Wakeup Button:** GPIO 0 (ปุ่ม PRG บนบอร์ด)
@@ -48,9 +48,9 @@
 *   **Sensor 1 (Tank 2):** Trigger GPIO 6, Echo GPIO 7
 *   **Sensor 2 (Tank 8):** Trigger GPIO 4, Echo GPIO 5
 
-#### 📍 Data Node 6 (NongPog - SPD)
+#### 📍 Data Node 20 (NongPog - SPD)
 *   **SPD Status Pin:** GPIO 4 (ต่อแบบ Input Pull-up)
-    *   Note: สามารถตั้งค่า Logic (NO/NC) ได้ในไฟล์ `Node_06_SPD_NongPog.cpp`
+    *   Note: สามารถตั้งค่า Logic (NO/NC) ได้ในไฟล์ `Node_20_SPD_NongPog.cpp`
 
 #### 📍 Master Node 100
 *   **Relays:**
@@ -58,7 +58,7 @@
     *   Relay 2: GPIO 6
     *   Relay 3: GPIO 5
     *   Relay 4: GPIO 4
-*   **Reset Button:** GPIO 47 (กดค้าง 2 วินาทีเพื่อรีเซ็ตการแจ้งเตือน)
+*   **Reset Button:** GPIO 1 (กดค้าง 2 วินาทีเพื่อรีเซ็ตการแจ้งเตือน)
 
 ---
 
@@ -142,10 +142,13 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 *   `env:node_2_3_phranon_plastic`
 *   `env:node_4_thamyai`
 *   `env:node_5_rongpui`
-*   `env:node_6_nongpog`
-*   `env:repeater_node_10`
+*   `env:node_6_taifa`
+*   `env:node_7_khonpd`
+*   `env:node_8_suanmm`
+*   `env:node_20_nongpog` (เดิมคือ Node 6)
+*   `env:repeater_node_101`
 *   `env:master_node_100`
-*   `env:node_test_repeater_receiver` (สำหรับทดสอบ LoRa Receiver ของ Repeater Node 10)
+*   `env:node_test_repeater_receiver` (สำหรับทดสอบ LoRa Receiver ของ Repeater Node 101)
 *   `env:node_test_thamyai_sender` (สำหรับทดสอบ LoRa Sender ของ Node 4 - ThamYai)
 
 ---
@@ -171,10 +174,16 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 | `ThamYai/battery` | แรงดันแบตเตอรี่แท็งค์ถ้ำใหญ่ | `0.00` - `4.20` (V) |
 | `RongPui` | ระดับน้ำแท็งค์โรงปุ๋ย | `0` - `100` (%) |
 | `RongPui/battery` | แรงดันแบตเตอรี่แท็งค์โรงปุ๋ย | `0.00` - `4.20` (V) |
-| `NongPog` | สถานะกันฟ้าผ่า (SPD) | `0` = ปกติ, `1` = เสีย |
-| `NongPog/battery` | แรงดันแบตเตอรี่ SPD หนองพอก | `0.00` - `4.20` (V) |
+| `TaiFa` | ระดับน้ำแท็งค์ TaiFa | `0` - `100` (%) |
+| `TaiFa/battery` | แรงดันแบตเตอรี่แท็งค์ TaiFa | `0.00` - `4.20` (V) |
+| `KhonPD` | ระดับน้ำแท็งค์ KhonPD | `0` - `100` (%) |
+| `KhonPD/battery` | แรงดันแบตเตอรี่แท็งค์ KhonPD | `0.00` - `4.20` (V) |
+| `SuanMM` | ระดับน้ำแท็งค์ SuanMM | `0` - `100` (%) |
+| `SuanMM/battery` | แรงดันแบตเตอรี่แท็งค์ SuanMM | `0.00` - `4.20` (V) |
+| `NongPog` | สถานะกันฟ้าผ่า (SPD Node 20) | `0` = ปกติ, `1` = เสีย |
+| `NongPog/battery` | แรงดันแบตเตอรี่ SPD Node 20 | `0.00` - `4.20` (V) |
 | `notification_status` | สถานะระบบแจ้งเตือน | `1` = เปิด, `0` = ปิด |
-| `message` | ข้อความสถานะระบบ/Log | String Message |
+| `message` | ข้อความสถานะระบบ/Log | ข้อความ String |
 
 ### 📥 Subscribe Topics (Dashboard/App ➔ Board)
 หัวข้อที่ Master Node รอรับคำสั่งจากผู้ใช้
@@ -210,7 +219,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 *   **ค่าระดับน้ำเป็น -1 หรือ Error:** เซ็นเซอร์อาจมีปัญหา หรือระยะวัดอยู่นอกช่วง (20cm - 450cm)
 *   **ไม่ได้รับแจ้งเตือน LINE:** ตรวจสอบการเชื่อมต่อ WiFi ของ Master Node และตรวจสอบว่า `notification_status` เป็น ON
 *   **SPD แจ้งเตือนผิดพลาด:** ตรวจสอบการตั้งค่า `SPD_IS_NC` ในโค้ด Node 6 ให้ตรงกับชนิดของอุปกรณ์ (NO/NC)
-
+    *   **แก้ไข:** ตรวจสอบการตั้งค่า `SPD_IS_NC` ในโค้ด `Node_20_SPD_NongPog.cpp` ให้ตรงกับชนิดของอุปกรณ์ (NO/NC)
 ---
 
 **Developed for Wat Doi Monitoring Project**

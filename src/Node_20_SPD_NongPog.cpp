@@ -31,7 +31,7 @@ const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation se
 const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE_SPD 2
-#define REPEATER_NODE 10
+#define REPEATER_NODE 101
 
 SX126XLT LT;
 
@@ -63,7 +63,7 @@ void showStatus() {
     display.clear();
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 0, "Node 6: SPD");
+    display.drawString(64, 0, "Node 20: SPD");
     
     bool failed = readSPDStatus();
     display.setFont(ArialMT_Plain_24);
@@ -133,7 +133,7 @@ uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t NodeID, uint
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Data Node 6 (NongPog) Initializing...");
+    Serial.println("Data Node 20 (NongPog) Initializing...");
 
     SPI.begin();
     delay(500);
@@ -162,9 +162,9 @@ void setup() {
         uint8_t status = failed ? 1 : 0;  // Convert bool to uint8_t for transmission
         
         // Send SPD status twice (to ensure successful transmission)
-        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 6, status);  
+        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 20, status);  
         delay(random(1000, 5000));  
-        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 6, status);  
+        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 20, status);  
     }
 
     VextOFF();

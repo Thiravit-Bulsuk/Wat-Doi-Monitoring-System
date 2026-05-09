@@ -27,7 +27,7 @@ const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE 1 // Water level message type
 #define NODE_ID 4      // ThamYai's Node ID
-#define REPEATER_NODE 10 // Repeater's Node ID
+#define REPEATER_NODE 101 // Repeater's Node ID
 
 SX126XLT LT;
 

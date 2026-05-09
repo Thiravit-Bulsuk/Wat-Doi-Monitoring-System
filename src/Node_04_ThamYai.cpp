@@ -39,7 +39,7 @@ const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation se
 const int8_t TXpower = 14;                      // ปรับความแรงสูงสุด (22 dBm) เนื่องจากอยู่ไกลมาก
 
 #define MESSAGE_TYPE 1
-#define REPEATER_NODE 10
+#define REPEATER_NODE 101
 
 SX126XLT LT;
 

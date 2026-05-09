@@ -33,7 +33,7 @@ const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation se
 const int8_t TXpower = 2;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE 1
-#define REPEATER_NODE 10
+#define REPEATER_NODE 101
 
 SX126XLT LT;
 

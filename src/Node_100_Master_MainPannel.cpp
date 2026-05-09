@@ -176,7 +176,10 @@ Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
     {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
     {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
     {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {6, "NongPog",  "NongPog",  0,  0,           MSG_TYPE_SPD,   -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0}
+    {6, "TaiFa",    "TaiFa",    50, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {7, "KhonPD",   "KhonPD",   50, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {8, "SuanMM",   "SuanMM",   50, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
+    {20, "NongPog", "NongPog",  0,  0,           MSG_TYPE_SPD,   -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0}
     // สามารถเพิ่ม Node ใหม่ได้ที่นี่ เช่น {9, "Tank9", "Tank9", 50, 0, MSG_TYPE_WATER, 0, 0, STATE_NORMAL, STATE_NORMAL, 0}
 };
 const int numNodes = sizeof(nodes) / sizeof(nodes[0]);
@@ -321,7 +324,7 @@ void receiveData() {
             
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            if (packet.receiverID == 100 && packet.senderID == 10) {
+            if (packet.receiverID == 100 && packet.senderID == 101) {
             
             Serial.print("MessageType: "); Serial.println(packet.messageType);
             Serial.print("nodeID: "); Serial.println(packet.sourceNodeID);
