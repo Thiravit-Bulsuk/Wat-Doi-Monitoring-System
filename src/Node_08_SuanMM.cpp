@@ -19,8 +19,8 @@
 #define ECHO_PIN 7
 
 // Define Tank Constants (Calibration)
-const int TANK_FULL_CM = 20;   // ระยะห่างระหว่างเซ็นเซอร์กับน้ำเต็ม
-const int TANK_EMPTY_CM = 120; // ระยะห่างระหว่างเซ็นเซอร์กับก้นแทงก์
+const int TANK_FULL_CM = 36;   // ระยะห่างระหว่างเซ็นเซอร์กับน้ำเต็ม
+const int TANK_EMPTY_CM = 150; // ระยะห่างระหว่างเซ็นเซอร์กับก้นแทงก์
 
 const uint32_t Frequency = 923000000;           // Frequency of transmissions
 const uint32_t Offset = 0;                      // Offset frequency for calibration purposes

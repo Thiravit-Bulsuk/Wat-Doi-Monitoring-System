@@ -16,8 +16,8 @@
 #define DIO1 14
 
 // Define sensor pin
-#define TRIGGER_PIN 6
-#define ECHO_PIN 7
+#define TRIGGER_PIN 47
+#define ECHO_PIN 48
 
 // Battery Measurement Pin (Heltec V3)
 #define ADC_BATTERY_PIN 1
