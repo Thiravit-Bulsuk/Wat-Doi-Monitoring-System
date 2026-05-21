@@ -268,7 +268,7 @@ void sendLineMessage(String message) {
         if (statusLine.indexOf("429") != -1) { // 429 คือ HTTP Status Too Many Requests (โควต้าเต็ม)
             errorAlert = "แจ้งเตือน: โควต้า LINE Messaging API เต็มแล้ว (HTTP 429)!";
         }
-        publishMessage(message_topic, errorAlert, false);
+    publishMessage(message_topic, errorAlert, true);
     }
     
     // วนลูปเพื่อให้ MQTT Client ทำงานและส่งข้อความออกไปจริงๆ ก่อนที่จะทำอย่างอื่นต่อ
