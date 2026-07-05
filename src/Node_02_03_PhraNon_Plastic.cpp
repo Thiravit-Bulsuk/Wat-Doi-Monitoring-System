@@ -17,12 +17,12 @@
 #define DIO1 14
 
 // Define sensor pin
-#define TRIGGER_PIN_1 6
-#define ECHO_PIN_1 7
+#define TRIGGER_PIN_1 46
+#define ECHO_PIN_1 45
 
 // Define second sensor pin
-#define TRIGGER_PIN_2 4 // กรุณาเลือก GPIO ที่เหมาะสม
-#define ECHO_PIN_2 5    // กรุณาเลือก GPIO ที่เหมาะสม
+#define TRIGGER_PIN_2 47 // กรุณาเลือก GPIO ที่เหมาะสม
+#define ECHO_PIN_2 48    // กรุณาเลือก GPIO ที่เหมาะสม
 
 // Define Tank Constants (Calibration)
 // Tank 2: สูงจริง 5m, ระยะเต็ม 25cm, ระยะน้ำหมดอ้างอิงที่ 450cm (เพื่อให้ค่า % ตรงกับความเป็นจริง)
