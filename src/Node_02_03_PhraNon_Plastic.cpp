@@ -46,6 +46,7 @@ const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE 1
 #define REPEATER_NODE 101
+#define AUTO_RESET_INTERVAL_MS 43200000UL // 12 ชั่วโมง ป้องกัน heap fragmentation สะสมจากการรันต่อเนื่องเป็นเวลานาน
 
 SX126XLT LT;
 
@@ -123,17 +124,6 @@ float readDistance(uint8_t triggerPin, uint8_t echoPin) {
              continue; // ลองใหม่
         }
 
-        // Sort valid readings (Bubble Sort)
-        for (int i = 0; i < validCount - 1; i++) {
-            for (int j = 0; j < validCount - i - 1; j++) {
-                if (validReadings[j] > validReadings[j + 1]) {
-                    float temp = validReadings[j];
-                    validReadings[j] = validReadings[j + 1];
-                    validReadings[j + 1] = temp;
-                }
-            }
-        }
-
         // Find Best Cluster (Density)
         int bestClusterSize = 0;
         float bestClusterAvg = 0;
@@ -146,7 +136,7 @@ float readDistance(uint8_t triggerPin, uint8_t echoPin) {
                     count++;
                     sum += validReadings[j];
                 } else {
-                    break; // หลุดช่วงแล้ว หยุดเช็ค
+                    break;
                 }
             }
             if (count > bestClusterSize) {
@@ -158,19 +148,16 @@ float readDistance(uint8_t triggerPin, uint8_t echoPin) {
         // 3. Decision
         if (bestClusterSize >= MIN_CLUSTER_SIZE) {
             if (bestClusterSize >= errorCount) {
-                Serial.print("Valid Dist: "); Serial.println(bestClusterAvg);
-                return bestClusterAvg; // เชื่อมั่นในกลุ่มตัวเลข
+                return bestClusterAvg;
             }
         }
     }
 
-    return -1.0; // ถ้าลองครบแล้วยังไม่ได้ผล ให้คืนค่า Error
+    return -1.0;
 }
 
 // Function to send data
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint8_t percentage) {
-    delay(1000);
-
     LoRaPacket packet;
     packet.messageType = MessageType;
     packet.receiverID = RepeaterNode;
@@ -180,7 +167,7 @@ uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint
     packet.battery = 0.0;
 
     uint8_t txBuffer[sizeof(LoRaPacket)];
-    memcpy(txBuffer, &packet, sizeof(LoRaPacket)); // Copy struct to byte array
+    memcpy(txBuffer, &packet, sizeof(LoRaPacket));
 
     Serial.print("Sending Data: TankID="); Serial.print(tankID); Serial.print(", %="); Serial.println(percentage);
 
@@ -191,6 +178,83 @@ uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint
     uint8_t len = LT.endWriteSXBuffer();
 
     return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
+}
+
+// Function to measure and compute percentage for Tank 2 (PhraNon)
+uint8_t measureTank2() {
+    VextON();
+    float distance1 = readDistance(TRIGGER_PIN_1, ECHO_PIN_1);
+    VextOFF();
+
+    uint8_t percentage1 = 0;
+
+    if (distance1 < 0) {
+        Serial.println("Error reading distance from Sensor 1 (Tank 2).");
+        if (lastValidDistance1 > (TANK2_EMPTY_CM - 40)) { 
+            isTankEmpty1 = true;
+            percentage1 = 0;
+        } else if (lastValidDistance1 < (TANK2_FULL_CM + 5)) {
+            Serial.println("Likely Blind Spot for Tank 2. Sending 100%.");
+            percentage1 = 100;
+        }
+        refillCount1 = 0;
+    } else {
+        if (isTankEmpty1) {
+            refillCount1++;
+            if (refillCount1 >= REFILL_THRESHOLD) {
+                isTankEmpty1 = false;
+                lastValidDistance1 = distance1;
+                long calc = map(lastValidDistance1, TANK2_FULL_CM, TANK2_EMPTY_CM, 100, 0);
+                percentage1 = (uint8_t)constrain(calc, 0, 100);
+                refillCount1 = 0;
+            } else {
+                percentage1 = 0;
+            }
+        } else {
+            lastValidDistance1 = distance1;
+            long calc = map(lastValidDistance1, TANK2_FULL_CM, TANK2_EMPTY_CM, 100, 0);
+            percentage1 = (uint8_t)constrain(calc, 0, 100);
+            refillCount1 = 0;
+        }
+    }
+    return percentage1;
+}
+
+// Function to measure and compute percentage for Tank 3 (Plastic)
+uint8_t measureTank3() {
+    VextON();
+    float distance2 = readDistance(TRIGGER_PIN_2, ECHO_PIN_2);
+    VextOFF();
+
+    uint8_t percentage2 = 0;
+
+    if (distance2 < 0) {
+        Serial.println("Error reading distance from Sensor 2 (Tank 3).");
+        if (lastValidDistance2 > (TANK3_EMPTY_CM - 10)) {
+            isTankEmpty2 = true;
+            percentage2 = 0;
+        }
+        refillCount2 = 0;
+    } else {
+        if (isTankEmpty2) {
+            refillCount2++;
+            if (refillCount2 >= REFILL_THRESHOLD) {
+                isTankEmpty2 = false;
+                lastValidDistance2 = distance2;
+                long calc = map(lastValidDistance2, TANK3_FULL_CM, TANK3_EMPTY_CM, 100, 0);
+                percentage2 = (uint8_t)constrain(calc, 0, 100);
+                refillCount2 = 0;
+            } else {
+                percentage2 = 0;
+            }
+        } else {
+            lastValidDistance2 = distance2;
+            long calc = map(lastValidDistance2, TANK3_FULL_CM, TANK3_EMPTY_CM, 100, 0);
+            percentage2 = (uint8_t)constrain(calc, 0, 100);
+            refillCount2 = 0;
+        }
+    }
+    return percentage2;
 }
 
 // Function to display status on OLED when button is pressed
@@ -242,21 +306,20 @@ void showStatus() {
     VextOFF();
 }
 
-// Smart delay function that checks for button press
-void smartDelay(unsigned long ms) {
-    unsigned long start = millis();
-    while (millis() - start < ms) {
-        if (digitalRead(PRG_BUTTON) == LOW) { // Button pressed (Active Low)
+// Task แยกต่างหากจาก loop() เพื่อให้ปุ่มกดตอบสนองได้แม้ขณะ loop() จะติดอยู่ใน receiveSXBuffer(WAIT_RX)
+void ButtonTask(void *parameter) {
+    for (;;) {
+        if (digitalRead(PRG_BUTTON) == LOW) {
             showStatus();
-            while(digitalRead(PRG_BUTTON) == LOW) delay(10); // Wait for release
+            while (digitalRead(PRG_BUTTON) == LOW) vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-        delay(50);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
     }
 }
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Data Node 2 (PhraNon) Initializing...");
+    Serial.println("Data Node 2 (PhraNon & Plastic) - Polling Mode Initializing...");
 
     SPI.begin();
     delay(500);
@@ -268,139 +331,62 @@ void setup() {
     pinMode(ECHO_PIN_2, INPUT);
     pinMode(PRG_BUTTON, INPUT_PULLUP);
     
-    // ตรวจสอบว่าตื่นเพราะกดปุ่มหรือไม่
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
-        showStatus(); // แสดงสถานะแล้วทำงานต่อ
-    }
+    VextOFF();
 
-    VextON();
-    delay(50);
-    
-    // ==========================================
-    // --- Sensor 1 (Tank ID 2) Logic ---
-    // ==========================================
-    float distance1 = readDistance(TRIGGER_PIN_1, ECHO_PIN_1);
-    bool shouldSendZero1 = false;
-    bool shouldSendValue1 = false;
-
-    if (distance1 < 0) {
-        Serial.println("Error reading distance from Sensor 1.");
-        
-        // กรณีน้ำหมด: หากระยะล่าสุดเกิน 410cm แล้ววัดไม่ได้ ให้ถือว่าน้ำหมดจริง (หลุดระยะเซนเซอร์)
-        if (lastValidDistance1 > (TANK2_EMPTY_CM - 40)) { 
-            isTankEmpty1 = true;
-            shouldSendZero1 = true;
-        }
-        // กรณีน้ำเต็ม (Blind Spot): หากระยะล่าสุดน้อยกว่า 30cm แล้ววัดไม่ได้ ให้ถือว่าน้ำเต็มจนบังเซนเซอร์
-        else if (lastValidDistance1 < (TANK2_FULL_CM + 5)) {
-            Serial.println("Likely Blind Spot for Tank 2. Sending 100%.");
-            shouldSendValue1 = true; 
-        }
-
-        refillCount1 = 0;
-    } else {
-        if (isTankEmpty1) {
-            refillCount1++;
-            if (refillCount1 >= REFILL_THRESHOLD) {
-                isTankEmpty1 = false;
-                lastValidDistance1 = distance1;
-                shouldSendValue1 = true;
-                refillCount1 = 0;
-            } else {
-                shouldSendZero1 = true; // ยังไม่ยืนยัน ส่ง 0 ไปก่อน
-            }
-        } else {
-            lastValidDistance1 = distance1;
-            shouldSendValue1 = true;
-            refillCount1 = 0;
-        }
-    }
-
-
-    // ==========================================
-    // --- Sensor 2 (Tank ID 3) Logic ---
-    // ==========================================
-    float distance2 = readDistance(TRIGGER_PIN_2, ECHO_PIN_2);
-    bool shouldSendZero2 = false;
-    bool shouldSendValue2 = false;
-
-    if (distance2 < 0) {
-        Serial.println("Error reading distance from Sensor 2.");
-        // ถ้าอ่านค่าไม่ได้ ให้ดูประวัติ (Tank 3 Empty ~240)
-        if (lastValidDistance2 > (TANK3_EMPTY_CM - 10)) { // > 230cm
-            isTankEmpty2 = true;
-            shouldSendZero2 = true;
-        }
-        refillCount2 = 0;
-    } else {
-        if (isTankEmpty2) {
-            refillCount2++;
-            if (refillCount2 >= REFILL_THRESHOLD) {
-                isTankEmpty2 = false;
-                lastValidDistance2 = distance2;
-                shouldSendValue2 = true;
-                refillCount2 = 0;
-            } else {
-                shouldSendZero2 = true;
-            }
-        } else {
-            lastValidDistance2 = distance2;
-            shouldSendValue2 = true;
-            refillCount2 = 0;
-        }
-    }
-
-    // เริ่มต้น LoRa เฉพาะตอนจะส่งข้อมูล
     if (!initLoRa()) {
         Serial.println("Critical Error: LoRa initialization failed.");
-    } else {
-        LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
-
-        // --- Sending Data for Sensor 1 ---
-        if (shouldSendZero1) {
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, 0);
-            smartDelay(random(10000, 20000));
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, 0);
-        } else if (shouldSendValue1) {
-            uint8_t percentage1 = map(lastValidDistance1, TANK2_FULL_CM, TANK2_EMPTY_CM, 100, 0);
-            percentage1 = constrain(percentage1, 0, 100);
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, percentage1);
-            smartDelay(random(10000, 20000));
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, percentage1);
-        }
-
-        if (shouldSendZero1 || shouldSendValue1) {
-             smartDelay(2000); // เว้นระยะนิดหน่อยถ้ามีการส่งข้อมูลชุดแรก
-        }
-
-        // --- Sending Data for Sensor 2 ---
-        if (shouldSendZero2) {
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, 0);
-            smartDelay(random(10000, 20000));
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, 0);
-        } else if (shouldSendValue2) {
-            uint8_t percentage2 = map(lastValidDistance2, TANK3_FULL_CM, TANK3_EMPTY_CM, 100, 0);
-            percentage2 = constrain(percentage2, 0, 100);
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, percentage2);
-            smartDelay(random(10000, 20000));
-            sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, percentage2);
-        }
+        while (1);
     }
 
-    VextOFF();
-    
-    // เตรียมตัวหลับ (Deep Sleep)
-    LT.setSleep(CONFIGURATION_RETENTION);   // Preserve register settings in sleep.
-    Serial.println("Entering Deep Sleep (5 mins)...");
-    Serial.flush();
+    LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
+    Serial.println("LoRa setup complete. Listening for poll requests...");
 
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0); // ตื่นด้วยปุ่มกด
-    
-    uint64_t sleepTime = 300000ULL * 1000ULL; // 5 นาที
-    sleepTime += random(1000, 30000) * 1000ULL; // Random Jitter
-    esp_sleep_enable_timer_wakeup(sleepTime);
-
-    esp_deep_sleep_start(); // หลับยาว
+    xTaskCreate(ButtonTask, "ButtonTask", 4096, NULL, 1, NULL);
 }
 
-void loop() {}
+void loop() {
+    if (millis() >= AUTO_RESET_INTERVAL_MS) {
+        Serial.println("Auto-reset: 12h uptime reached, restarting...");
+        ESP.restart();
+    }
+
+    // Listen for Master poll requests
+    int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
+    if (packetSize > 0) {
+        if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+            LoRaPacket packet;
+            uint8_t rxBuffer[sizeof(LoRaPacket)];
+
+            LT.startReadSXBuffer(0);
+            for (int i = 0; i < sizeof(LoRaPacket); i++) {
+                rxBuffer[i] = LT.readUint8();
+            }
+            if (packetSize == (sizeof(LoRaPacket) + 2)) {
+                LT.readUint8();
+                LT.readUint8();
+            }
+            LT.endReadSXBuffer();
+
+            memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
+
+            if (packet.messageType == MSG_TYPE_POLL_REQ) {
+                // Request for Tank 2 (PhraNon)
+                if (packet.receiverID == TANK2_ID || packet.sourceNodeID == TANK2_ID) {
+                    Serial.println("Received POLL_REQ for Tank 2 (PhraNon). Measuring...");
+                    uint8_t pct = measureTank2();
+                    delay(50);
+                    sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, pct);
+                }
+                // Request for Tank 3 (Plastic)
+                else if (packet.receiverID == TANK3_ID || packet.sourceNodeID == TANK3_ID) {
+                    Serial.println("Received POLL_REQ for Tank 3 (Plastic). Measuring...");
+                    uint8_t pct = measureTank3();
+                    delay(50);
+                    sendData(MESSAGE_TYPE, REPEATER_NODE, TANK3_ID, pct);
+                }
+            }
+        } else {
+            LT.endReadSXBuffer();
+        }
+    }
+}

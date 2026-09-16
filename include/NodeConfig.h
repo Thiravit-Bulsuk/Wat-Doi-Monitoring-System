@@ -11,17 +11,23 @@ enum AlertState {
 };
 
 // ประเภทของข้อมูลที่ส่ง
-#define MSG_TYPE_WATER 1 // ข้อมูลระดับน้ำ
-#define MSG_TYPE_SPD   2 // ข้อมูลสถานะกันฟ้าผ่า
+#define MSG_TYPE_WATER     1  // ข้อมูลระดับน้ำ
+#define MSG_TYPE_SPD       2  // ข้อมูลสถานะกันฟ้าผ่า
+#define MSG_TYPE_POLL_REQ  10 // คำขออ่านข้อมูลจาก Master (Request / Polling)
+
+// ค่าคงที่สำหรับการ Polling & Retry
+#define POLL_TIMEOUT_MS         4500  // ระยะเวลารอตอบกลับต่อครั้ง (4.5 วินาที)
+#define MAX_POLL_RETRIES        2     // จำนวนครั้งที่ลองส่งซ้ำหากไม่ตอบกลับ (รวมเป็น 3 ครั้ง)
+#define POLL_CYCLE_INTERVAL_MS  180000 // รอบเวลาการ Polling ทุกโหนด (3 นาที)
 
 // โครงสร้างก้อนข้อมูลสำหรับส่งผ่าน LoRa (ใช้ __attribute__((packed)) เพื่อป้องกัน padding)
 struct __attribute__((packed)) LoRaPacket {
-    uint8_t messageType;  // ประเภทข้อความ (WATER/SPD)
+    uint8_t messageType;  // ประเภทข้อความ (WATER/SPD/POLL_REQ)
     uint8_t receiverID;   // ID ผู้รับ
-    uint8_t senderID;     // ID ผู้ส่ง (Repeater หรือ Node)
-    uint8_t sourceNodeID; // ID ของ Node ต้นทางจริงๆ
-    uint8_t value;        // ค่าที่วัดได้ (%)
-    float battery;        // แรงดันแบตเตอรี่ (V) - เผื่อไว้ใช้ในอนาคต
+    uint8_t senderID;     // ID ผู้ส่ง (Repeater, Master หรือ Node)
+    uint8_t sourceNodeID; // ID ของ Node ต้นทาง (หรือ ID เป้าหมายกรณี POLL_REQ)
+    uint8_t value;        // ค่าที่วัดได้ (%) หรือสถานะ SPD
+    float battery;        // แรงดันแบตเตอรี่ (V)
 };
 
 // โครงสร้างข้อมูลสำหรับแต่ละ Node

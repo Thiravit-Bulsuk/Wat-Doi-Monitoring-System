@@ -11,19 +11,22 @@
 #include <ProgramLT_Definitions.h>
 #include "NodeConfig.h"
 #include <time.h>
+#include <freertos/queue.h>
 
 void sendLineMessage(String message);
 void resetSystem();
 void ResetTimerTask(void *parameter);
 void IRAM_ATTR handleButtonPress();
 bool initLoRa();
-void receiveData();
+void processReceivedPacket(const LoRaPacket &packet);
+bool pollSingleNode(int nodeIdx);
+bool pollNodeWithRetries(int nodeIdx);
+void pollAllNodes();
 void activateRelay(uint8_t nodeID);
 void resetNotification();
 void VextON(void);
 void VextOFF(void);
 void displayData(String tankName, String message);
-bool initLoRa(); // ย้ายมาไว้ตรงนี้
 void CheckCommError();
 void DisplayTimerTask(void *pvParameters);
 void reconnect();
@@ -33,7 +36,8 @@ void sendMQTTData();
 bool checkInternetConnection();
 void MainTask(void *parameter);
 void ButtonTask(void *parameter);
-void handleNodeRecovery(int nodeIdx); // ฟังก์ชันช่วยจัดการเมื่อ Node กลับมาออนไลน์
+void handleNodeRecovery(int nodeIdx);
+void enqueueLineTextMessage(const String &message);
 
 // Task handles
 TaskHandle_t TaskMain;
@@ -77,7 +81,18 @@ const char* mqtt_password = "@16Jan2563";
 const int mqtt_port = 8883;
 
 WiFiClientSecure espClient;
-PubSubClient client(espClient);
+PubSubClient client(espClient); // เข้าถึง client/espClient ได้จาก MainTask เท่านั้น ที่อื่นต้องส่งผ่านคิว/แฟล็กด้านล่าง
+
+// คิวสำหรับข้อความ LINE ที่ต้องประกาศต่อขึ้น MQTT (ผลิตจากหลาย Task, บริโภคโดย MainTask เท่านั้น)
+#define MQTT_MSG_MAX_LEN 200
+struct MqttTextMessage {
+    char text[MQTT_MSG_MAX_LEN];
+};
+QueueHandle_t mqttMessageQueue = NULL;
+
+// แฟล็กขอให้ MainTask เรียก sendMQTTData() รอบถัดไป (ตั้งจาก Task อื่นได้ อ่าน/เคลียร์โดย MainTask เท่านั้น)
+volatile bool pendingMQTTDataSync = false;
+
 unsigned long suspectedCommTime = 0; // ตัวแปรสำหรับเก็บเวลาที่เริ่มพบปัญหาการสื่อสารครั้งแรก
 bool repeaterErrorActive = false;    // สถานะแจ้งเตือน Repeater ขัดข้อง
 unsigned long lastRepeaterRecoveryTime = 0; // เวลาที่ Repeater กลับมาปกติครั้งล่าสุด
@@ -159,7 +174,7 @@ WiFiMulti wifiMulti;
 // #define WIFI_SSID   "iPhone" // WiFi Name
 // #define WIFI_PASSWORD  "12345678" // WiFi Password
 
-#define ONE_DAY_INTERVAL 43200000 // 1/2 วันใน milliseconds (12 * 60 * 60 * 1000)
+#define AUTO_RESET_INTERVAL_MS 43200000 // 12 ชั่วโมงใน milliseconds (12 * 60 * 60 * 1000) เพื่อล้าง heap fragmentation สะสมเป็นระยะ
 
 static SSD1306Wire  display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED); // addr , freq , i2c group , resolution , rst
 
@@ -188,9 +203,6 @@ Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
     {20, "NongPog", "NongPog",  0,  0,           MSG_TYPE_SPD,   -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0}
     // สามารถเพิ่ม Node ใหม่ได้ที่นี่ เช่น {9, "Tank9", "Tank9", 50, 0, MSG_TYPE_WATER, 0, 0, STATE_NORMAL, STATE_NORMAL, 0}
 };
-
-const int RECOVERY_THRESHOLD = 3; // ต้องได้รับข้อมูลติดต่อกัน 3 ครั้งถึงจะแจ้งว่าปกติ
-int recoveryCounters[sizeof(nodes) / sizeof(nodes[0])] = {0}; // ตัวนับสำหรับการฟื้นตัวของแต่ละ Node
 
 const int numNodes = sizeof(nodes) / sizeof(nodes[0]);
 unsigned long nodeLowWaterStartTime[numNodes] = {0}; // จับเวลาสำหรับเงื่อนไขพิเศษของ TaiFa, KhonPD, SuanMM
@@ -261,23 +273,27 @@ void sendLineMessage(String message) {
 
     if (statusLine.indexOf("200") != -1) { // 200 คือ HTTP Status OK (ส่งสำเร็จ) ไม่ใช่จำนวนข้อความ
         Serial.println("LINE Message Sent: " + message);
-        publishMessage(message_topic, message, true);
+        enqueueLineTextMessage(message);
     } else {
         Serial.println("LINE API Error: " + statusLine);
         String errorAlert = "ระบบ: ส่ง LINE ไม่สำเร็จ (" + statusLine.substring(9) + ")";
         if (statusLine.indexOf("429") != -1) { // 429 คือ HTTP Status Too Many Requests (โควต้าเต็ม)
             errorAlert = "แจ้งเตือน: โควต้า LINE Messaging API เต็มแล้ว (HTTP 429)!";
         }
-    publishMessage(message_topic, errorAlert, true);
+        enqueueLineTextMessage(errorAlert);
     }
-    
-    // วนลูปเพื่อให้ MQTT Client ทำงานและส่งข้อความออกไปจริงๆ ก่อนที่จะทำอย่างอื่นต่อ
-    unsigned long start = millis();
-    while (millis() - start < 1000) {
-        client.loop();
-        delay(10);
-    }
+
     lineClient.stop();
+}
+
+// ส่งข้อความเข้าคิวให้ MainTask เป็นผู้ publish ขึ้น MQTT แต่เพียงผู้เดียว (ปลอดภัยเมื่อเรียกจากหลาย Task)
+void enqueueLineTextMessage(const String &message) {
+    if (mqttMessageQueue == NULL) return;
+    MqttTextMessage item;
+    message.toCharArray(item.text, MQTT_MSG_MAX_LEN);
+    if (xQueueSend(mqttMessageQueue, &item, 0) != pdTRUE) {
+        Serial.println("WARNING: mqttMessageQueue full, dropping message: " + message);
+    }
 }
 
 
@@ -293,7 +309,7 @@ void ResetTimerTask(void *parameter) {
     unsigned long lastResetTime = millis();
     while (true) {
         // ตรวจสอบว่าถึงเวลาที่จะรีเซ็ตหรือยัง
-        if (millis() - lastResetTime >= ONE_DAY_INTERVAL) {
+        if (millis() - lastResetTime >= AUTO_RESET_INTERVAL_MS) {
             resetSystem(); // เรียกใช้ฟังก์ชันรีเซ็ตระบบ
             lastResetTime = millis(); // อัปเดตเวลาล่าสุด
         }
@@ -311,136 +327,235 @@ bool initLoRa() {
     return true;
 }
 
-// Function to receive and validate data
-void receiveData() {
-    int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
+// Function to process a received data packet
+void processReceivedPacket(const LoRaPacket &packet) {
+    Serial.print("RX Data -> MessageType: "); Serial.println(packet.messageType);
+    Serial.print("nodeID: "); Serial.println(packet.sourceNodeID);
+    Serial.print("Value: "); Serial.println(packet.value);
+    Serial.print("Battery: "); Serial.println(packet.battery);
 
-    if (packetSize > 0) {
-        if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
-            Serial.println("Received packet (size OK)");
-        
-            LoRaPacket packet;
-            uint8_t rxBuffer[sizeof(LoRaPacket)];
+    lastRepeaterSeen = millis();
 
-            LT.startReadSXBuffer(0);
-            for (int i = 0; i < sizeof(LoRaPacket); i++) {
-                rxBuffer[i] = LT.readUint8();
+    for (int i = 0; i < numNodes; i++) {
+        if (nodes[i].id == packet.sourceNodeID) {
+            nodes[i].lastValue = (int)packet.value;
+            nodes[i].lastSeen = millis();
+            nodes[i].battery = packet.battery; // บันทึกค่าแบตเตอรี่ที่ได้รับ
+
+            // แจ้งเตือนแบตเตอรี่ต่ำ (เฉพาะ ThamYai ID:4 และ RongPui ID:5)
+            if ((nodes[i].id == 4 || nodes[i].id == 5) && 
+                nodes[i].battery > 0 && 
+                nodes[i].battery < BATTERY_LOW_THRESHOLD && 
+                nodes[i].alertState == STATE_NORMAL) {
+                sendLineMessage("แจ้งเตือน: DataNode " + nodes[i].name + " แบตเตอรี่ต่ำ (" + String(nodes[i].battery, 2) + "V)");
             }
-            // ถ้ามี CRC ติดมาด้วย 2 ไบต์ ให้อ่านทิ้งเพื่อให้ Buffer ว่าง
-            if (packetSize == (sizeof(LoRaPacket) + 2)) {
-                LT.readUint8(); // CRC 1
-                LT.readUint8(); // CRC 2
+
+            // กรณีกลับมาทำงานปกติหลังจาก Comm Error
+            if (nodes[i].commState == STATE_COMM_ERROR) {
+                handleNodeRecovery(i);
             }
-            LT.endReadSXBuffer();
-            
-            memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            if (packet.receiverID == 100 && packet.senderID == 101) {
-            
-            Serial.print("MessageType: "); Serial.println(packet.messageType);
-            Serial.print("nodeID: "); Serial.println(packet.sourceNodeID);
-            Serial.print("Value: "); Serial.println(packet.value);
-            Serial.print("Battery: "); Serial.println(packet.battery);
-
-            // Update last seen time for Repeater (ใช้การนับเวลาเพื่อตรวจจับ Repeater ไฟดับ)
-            lastRepeaterSeen = millis();
-
-            for (int i = 0; i < numNodes; i++) {
-                if (nodes[i].id == packet.sourceNodeID) {
-                    nodes[i].lastValue = (int)packet.value;
-                    nodes[i].lastSeen = millis();
-                    nodes[i].battery = packet.battery; // บันทึกค่าแบตเตอรี่ที่ได้รับ
-
-                    // แจ้งเตือนแบตเตอรี่ต่ำ (เฉพาะ ThamYai ID:4 และ RongPui ID:5 ตามข้อมูลหน้างาน)
-                    if ((nodes[i].id == 4 || nodes[i].id == 5) && 
-                        nodes[i].battery > 0 && 
-                        nodes[i].battery < BATTERY_LOW_THRESHOLD && 
-                        nodes[i].alertState == STATE_NORMAL) {
-                        sendLineMessage("แจ้งเตือน: DataNode " + nodes[i].name + " แบตเตอรี่ต่ำ (" + String(nodes[i].battery, 2) + "V)");
-                    }
-
-                    // กรณีกลับมาทำงานปกติหลังจาก Comm Error
-                    if (nodes[i].commState == STATE_COMM_ERROR) {
-                        recoveryCounters[i]++;
-                        Serial.printf("DEBUG: Node %s recovery count: %d/%d\n", nodes[i].name.c_str(), recoveryCounters[i], RECOVERY_THRESHOLD);
-                        if (recoveryCounters[i] >= RECOVERY_THRESHOLD) {
-                            handleNodeRecovery(i);
-                            recoveryCounters[i] = 0;
-                        }
-                    }
-
-                    // Logic สำหรับระดับน้ำ
-                    if (nodes[i].msgType == MSG_TYPE_WATER) {
-                        // เงื่อนไขพิเศษสำหรับ TaiFa, KhonPD, SuanMM (Node ID 6, 7, 8)
-                        if (nodes[i].id == 6 || nodes[i].id == 7 || nodes[i].id == 8) {
-                            if (nodes[i].lastValue < 10) {
-                                if (nodeLowWaterStartTime[i] == 0) {
-                                    nodeLowWaterStartTime[i] = millis();
-                                    if (nodeLowWaterStartTime[i] == 0) nodeLowWaterStartTime[i] = 1; // กันค่าเป็น 0
-                                } else if (millis() - nodeLowWaterStartTime[i] >= 7200000) { // นานเกิน 2 ชั่วโมง (7,200,000 ms)
-                                    if (nodes[i].alertState == STATE_NORMAL) {
-                                        sendLineMessage("แจ้งเตือน: แท็งค์ " + nodes[i].name + " น้ำหมดแท็งก์นานผิดปกติ");
-                                        nodes[i].alertState = STATE_LOW_WATER;
-                                    }
-                                }
-                            } else {
-                                nodeLowWaterStartTime[i] = 0; // รีเซ็ตเวลาเมื่อน้ำเกิน 10%
-                                if (nodes[i].alertState == STATE_LOW_WATER) nodes[i].alertState = STATE_NORMAL;
-                            }
-                        } 
-                        // เงื่อนไขปกติสำหรับ Node อื่นๆ
-                        else if (nodes[i].lastValue < nodes[i].threshold) {
-                            nodes[i].lowCount++;
-                            if (nodes[i].lowCount >= LOW_THRESHOLD && nodes[i].alertState == STATE_NORMAL) {
-                                sendLineMessage("แจ้งเตือน: แท็งค์ " + nodes[i].name + " น้ำเหลือต่ำกว่า " + String(nodes[i].threshold) + "%");
-                                activateRelay(nodes[i].id);
+            // Logic สำหรับระดับน้ำ
+            if (nodes[i].msgType == MSG_TYPE_WATER) {
+                // เงื่อนไขพิเศษสำหรับ TaiFa, KhonPD, SuanMM (Node ID 6, 7, 8)
+                if (nodes[i].id == 6 || nodes[i].id == 7 || nodes[i].id == 8) {
+                    if (nodes[i].lastValue < 10) {
+                        if (nodeLowWaterStartTime[i] == 0) {
+                            nodeLowWaterStartTime[i] = millis();
+                            if (nodeLowWaterStartTime[i] == 0) nodeLowWaterStartTime[i] = 1;
+                        } else if (millis() - nodeLowWaterStartTime[i] >= 7200000) { // นานเกิน 2 ชั่วโมง
+                            if (nodes[i].alertState == STATE_NORMAL) {
+                                sendLineMessage("แจ้งเตือน: แท็งค์ " + nodes[i].name + " น้ำหมดแท็งก์นานผิดปกติ");
                                 nodes[i].alertState = STATE_LOW_WATER;
                             }
-                        } else {
-                            nodes[i].lowCount = 0;
-                            // ถ้าน้ำกลับมาปกติ (เกิน Threshold) และเคยเตือนไปแล้ว ให้ Reset State
-                            // ในที่นี้สมมติว่าให้ Reset อัตโนมัติเมื่อน้ำเกิน Threshold
-                            if (nodes[i].alertState == STATE_LOW_WATER) nodes[i].alertState = STATE_NORMAL;
                         }
-                    } 
-                    // Logic สำหรับ SPD
-                    else if (nodes[i].msgType == MSG_TYPE_SPD) {
-                        if (nodes[i].lastValue == 1 && nodes[i].alertState == STATE_NORMAL) {
-                            sendLineMessage("แจ้งเตือน: SPD " + nodes[i].name + " หมดสภาพแล้ว โปรดตรวจสอบ");
-                            nodes[i].alertState = STATE_LOW_WATER;
-                        }
+                    } else {
+                        nodeLowWaterStartTime[i] = 0;
+                        if (nodes[i].alertState == STATE_LOW_WATER) nodes[i].alertState = STATE_NORMAL;
                     }
-                    break;
+                } 
+                // เงื่อนไขปกติสำหรับ Node อื่นๆ
+                else if (nodes[i].lastValue < nodes[i].threshold) {
+                    nodes[i].lowCount++;
+                    if (nodes[i].lowCount >= LOW_THRESHOLD && nodes[i].alertState == STATE_NORMAL) {
+                        sendLineMessage("แจ้งเตือน: แท็งค์ " + nodes[i].name + " น้ำเหลือต่ำกว่า " + String(nodes[i].threshold) + "%");
+                        activateRelay(nodes[i].id);
+                        nodes[i].alertState = STATE_LOW_WATER;
+                    }
+                } else {
+                    nodes[i].lowCount = 0;
+                    if (nodes[i].alertState == STATE_LOW_WATER) nodes[i].alertState = STATE_NORMAL;
+                }
+            } 
+            // Logic สำหรับ SPD
+            else if (nodes[i].msgType == MSG_TYPE_SPD) {
+                if (nodes[i].lastValue == 1 && nodes[i].alertState == STATE_NORMAL) {
+                    sendLineMessage("แจ้งเตือน: SPD " + nodes[i].name + " หมดสภาพแล้ว โปรดตรวจสอบ");
+                    nodes[i].alertState = STATE_LOW_WATER;
                 }
             }
-            newDataReceived = true; 
-        } else {
-                Serial.println("Message does not meet criteria (ID mismatch), ignoring.");
-            }
-        } else {
-            Serial.print("Received packet with unexpected size: "); Serial.print(packetSize); 
-            Serial.print(" bytes. Expected "); Serial.print(sizeof(LoRaPacket)); Serial.println(" or +2. Ignoring.");
-            LT.endReadSXBuffer();
+            break;
         }
+    }
+    newDataReceived = true;
+}
+
+// Function to send a single poll request and wait for a response
+bool pollSingleNode(int nodeIdx) {
+    uint8_t targetID = nodes[nodeIdx].id;
+
+    LoRaPacket pollPacket;
+    pollPacket.messageType = MSG_TYPE_POLL_REQ;
+    pollPacket.receiverID = 101;  // ส่งหา Repeater
+    pollPacket.senderID = 100;    // จาก Master
+    pollPacket.sourceNodeID = targetID; // ระบุ Node ปลายทางที่ต้องการให้อ่านค่า
+    pollPacket.value = 0;
+    pollPacket.battery = 0.0;
+
+    uint8_t txBuffer[sizeof(LoRaPacket)];
+    memcpy(txBuffer, &pollPacket, sizeof(LoRaPacket));
+
+    LT.startWriteSXBuffer(0);
+    for (int i = 0; i < sizeof(LoRaPacket); i++) {
+        LT.writeUint8(txBuffer[i]);
+    }
+    uint8_t len = LT.endWriteSXBuffer();
+
+    uint8_t txResult = LT.transmitSXBuffer(0, len + 2, 5000, TXpower, WAIT_TX);
+    if (txResult == 0) {
+        Serial.printf("Error: Failed to transmit POLL_REQ to Node %s (ID %d)\n", nodes[nodeIdx].name.c_str(), targetID);
+        return false;
+    }
+
+    // รอรับคำตอบกลับจาก Repeater (Downlink -> Node -> Uplink -> Master)
+    unsigned long startTime = millis();
+    while (millis() - startTime < POLL_TIMEOUT_MS) {
+        if (mqttRequestData) {
+            Serial.println("DEBUG: Poll wait aborted - a new manual poll request is pending.");
+            return false;
+        }
+        int packetSize = LT.receiveSXBuffer(0, 0, NO_WAIT);
+        if (packetSize > 0) {
+            if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+                LoRaPacket rxPacket;
+                uint8_t rxBuffer[sizeof(LoRaPacket)];
+
+                LT.startReadSXBuffer(0);
+                for (int i = 0; i < sizeof(LoRaPacket); i++) {
+                    rxBuffer[i] = LT.readUint8();
+                }
+                if (packetSize == (sizeof(LoRaPacket) + 2)) {
+                    LT.readUint8();
+                    LT.readUint8();
+                }
+                LT.endReadSXBuffer();
+
+                memcpy(&rxPacket, rxBuffer, sizeof(LoRaPacket));
+
+                // ตรวจสอบว่าเป็นคำตอบที่ส่งถึง Master (100) จาก Repeater (101) สำหรับ Node ที่กำลัง Poll อยู่
+                if (rxPacket.receiverID == 100 && rxPacket.senderID == 101 && rxPacket.sourceNodeID == targetID) {
+                    processReceivedPacket(rxPacket);
+                    return true;
+                }
+            } else {
+                LT.endReadSXBuffer();
+            }
+        }
+        delay(20);
+    }
+
+    return false; // หมดเวลารอ
+}
+
+// Function to poll a node with retries if no response
+bool pollNodeWithRetries(int nodeIdx) {
+    int maxAttempts = 1 + MAX_POLL_RETRIES;
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (mqttRequestData) {
+            Serial.println("DEBUG: Retry loop aborted - a new manual poll request is pending.");
+            return false;
+        }
+        Serial.printf("Polling Node %s (ID %d) - Attempt %d/%d...\n", nodes[nodeIdx].name.c_str(), nodes[nodeIdx].id, attempt, maxAttempts);
+        
+        if (pollSingleNode(nodeIdx)) {
+            Serial.printf("-> Node %s (ID %d) responded OK on attempt %d.\n", nodes[nodeIdx].name.c_str(), nodes[nodeIdx].id, attempt);
+            return true;
+        }
+
+        Serial.printf("-> Node %s (ID %d) no response on attempt %d.\n", nodes[nodeIdx].name.c_str(), nodes[nodeIdx].id, attempt);
+        if (attempt < maxAttempts) {
+            delay(300); // หน่วงเวลาก่อนลองส่งซ้ำ
+        }
+    }
+
+    // หากลองครบตามจำนวนแล้วยังไม่ตอบ
+    Serial.printf("-> CRITICAL: Node %s (ID %d) FAILED to respond after %d attempts!\n", nodes[nodeIdx].name.c_str(), nodes[nodeIdx].id, maxAttempts);
+    
+    if (nodes[nodeIdx].commState == STATE_NORMAL) {
+        nodes[nodeIdx].commState = STATE_COMM_ERROR;
+        sendLineMessage("แจ้งเตือน: การสื่อสารขัดข้องที่ DataNode " + nodes[nodeIdx].name + " (ไม่ตอบกลับคำขอ)");
+        pendingMQTTDataSync = true;
+    }
+
+    return false;
+}
+
+// Function to sequentially poll all configured nodes
+void pollAllNodes() {
+    Serial.println("========================================");
+    Serial.println("Starting Master Polling Cycle...");
+    Serial.println("========================================");
+
+    int successCount = 0;
+    bool cycleAborted = false;
+
+    for (int i = 0; i < numNodes; i++) {
+        if (mqttRequestData) {
+            Serial.println("Polling Cycle Aborted: a new manual poll request is pending, restarting fresh.");
+            cycleAborted = true;
+            break;
+        }
+        if (pollNodeWithRetries(i)) {
+            successCount++;
+        }
+        delay(300); // เว้นระยะระหว่าง Node เพื่อความสะอาดของความถี่
+        // หมายเหตุ: ไม่เรียก client.loop() ที่นี่ เพราะ loop()/pollAllNodes() รันคนละ Task กับ MainTask ซึ่งเรียก client.loop() อยู่แล้ว
+    }
+
+    // รอบที่ถูก interrupt ยังไม่ได้ข้อมูลครบทุก Node จึงข้ามการประเมินผล/แจ้งเตือน แล้วปล่อยให้ loop() เริ่มรอบใหม่ทันที
+    if (cycleAborted) {
+        return;
+    }
+
+    Serial.printf("Polling Cycle Completed: %d/%d nodes responded.\n", successCount, numNodes);
+
+    // ตรวจสอบว่า Repeater มีปัญหาหรือไม่ (ถ้าไม่ได้รับข้อมูลจากโหนดใดๆ เลย)
+    if (successCount == 0 && numNodes > 0) {
+        if (!repeaterErrorActive) {
+            sendLineMessage("แจ้งเตือน: พบความผิดปกติที่ Repeater (ไม่สามารถติดต่อ Data Nodes ผ่าน Repeater ได้)");
+            repeaterErrorActive = true;
+            for (int i = 0; i < numNodes; i++) {
+                nodes[i].commState = STATE_COMM_ERROR;
+            }
+            pendingMQTTDataSync = true;
+        }
+    } else {
+        if (repeaterErrorActive) {
+            sendLineMessage("แจ้งเตือน: ระบบการสื่อสาร (Repeater) กลับมาทำงานปกติแล้ว");
+            repeaterErrorActive = false;
+            lastRepeaterRecoveryTime = millis();
+        }
+        pendingMQTTDataSync = true; // อัปเดตข้อมูลขึ้น MQTT
     }
 }
 
 // ฟังก์ชันจัดการเมื่อ Node กลับมาออนไลน์ เพื่อให้โค้ดหลักสะอาดขึ้น
 void handleNodeRecovery(int nodeIdx) {
     if (repeaterErrorActive) {
-        // ใช้ RECOVERY_THRESHOLD กับ Repeater ด้วย (ต้องรอให้ Node ใดก็ได้ส่งผ่านมาครบ 3 ครั้งก่อน)
-        static int repeaterRecoveryCounter = 0;
-        repeaterRecoveryCounter++;
-        Serial.printf("DEBUG: Repeater recovery check: %d/%d\n", repeaterRecoveryCounter, RECOVERY_THRESHOLD);
-        
-        if (repeaterRecoveryCounter >= RECOVERY_THRESHOLD) {
-            sendLineMessage("แจ้งเตือน: ระบบการสื่อสาร (Repeater) กลับมาทำงานปกติแล้ว");
-            repeaterErrorActive = false;
-            lastRepeaterRecoveryTime = millis();
-            repeaterRecoveryCounter = 0;
-        }
+        sendLineMessage("แจ้งเตือน: ระบบการสื่อสาร (Repeater) กลับมาทำงานปกติแล้ว");
+        repeaterErrorActive = false;
+        lastRepeaterRecoveryTime = millis();
     } else {
-        // แจ้งเตือนรายโหนดเฉพาะเมื่อไม่อยู่ในช่วงพัก (Grace Period) หลัง Repeater ฟื้น
         unsigned long timeSinceLastRecovery = millis() - lastRepeaterRecoveryTime;
         if (timeSinceLastRecovery > RECOVERY_GRACE_PERIOD) {
             sendLineMessage("แจ้งเตือน: DataNode " + nodes[nodeIdx].name + " กลับมาทำงานปกติแล้ว");
@@ -449,7 +564,7 @@ void handleNodeRecovery(int nodeIdx) {
         }
     }
     nodes[nodeIdx].commState = STATE_NORMAL;
-    sendMQTTData(); // อัปเดตสถานะขึ้น MQTT ทันทีเมื่อกลับมาปกติ
+    pendingMQTTDataSync = true; // อัปเดตสถานะขึ้น MQTT ทันทีเมื่อกลับมาปกติ
 }
 
 // Function to activate relay based on tank ID
@@ -499,7 +614,6 @@ void resetNotification() {
         nodeLowWaterStartTime[i] = 0;
     }
     repeaterErrorActive = false;
-    for(int i=0; i<numNodes; i++) recoveryCounters[i] = 0;
     suspectedCommTime = 0;         // ล้างเวลาที่กำลังรอสังเกตการณ์ทิ้งด้วย
     lastRepeaterRecoveryTime = 0;  // ล้างช่วงเวลาพักการแจ้งเตือน (Grace Period) เพื่อให้พร้อมรับข้อมูลใหม่ทันที
     lastRepeaterSeen = millis();   // ป้องกันการตรวจจับ Repeater ลงทันทีหลังรีเซ็ต
@@ -584,7 +698,6 @@ void CheckCommError() {
             for (int i = 0; i < numNodes; i++) {
                 if (nodes[i].commState == STATE_NORMAL) {
                     nodes[i].commState = STATE_COMM_ERROR;
-                    recoveryCounters[i] = 0;
                     stateChanged = true;
                 }
             }
@@ -598,14 +711,13 @@ void CheckCommError() {
                 }
                 // ต้องเปลี่ยนสถานะเป็น ERROR เสมอ เพื่อให้ระบบรับทราบว่าโหนดนี้ขาดการติดต่อแล้ว
                 nodes[i].commState = STATE_COMM_ERROR;
-                recoveryCounters[i] = 0; // รีเซ็ตตัวนับการฟื้นตัวเมื่อเกิด Error ใหม่
                 stateChanged = true;
             }
         }
 
         // หากมีการเปลี่ยนแปลงสถานะ ให้ส่งข้อมูลขึ้น MQTT เพียงรอบเดียว
         if (stateChanged) {
-            sendMQTTData();
+            pendingMQTTDataSync = true;
         }
         suspectedCommTime = 0;
     }
@@ -758,6 +870,9 @@ void setup() {
     Serial.begin(115200);
     Serial.println("Master Node 6 Initializing...");
 
+    // ต้องสร้างก่อนเริ่ม Task ใดๆ เพื่อให้ loop()/MainTask ส่งข้อความผ่าน Queue ได้ตั้งแต่ต้น
+    mqttMessageQueue = xQueueCreate(20, sizeof(MqttTextMessage));
+
     SPI.begin();
     delay(500);
 
@@ -825,9 +940,8 @@ void setup() {
     // Create tasks
     xTaskCreate(MainTask, "MainTask", 10000, NULL, 1, &TaskMain);
 
-    // สร้าง Task สำหรับรีเซ็ตอัตโนมัติ
-    // disableชั่วคราวเพื่อทดสอบ
-    //xTaskCreate(ResetTimerTask, "ResetTimerTask", 1000, NULL, 1, &TaskResetTimer);
+    // สร้าง Task สำหรับรีเซ็ตอัตโนมัติทุก 12 ชั่วโมง เพื่อป้องกัน heap fragmentation สะสมจากการใช้ String ต่อเนื่อง
+    xTaskCreate(ResetTimerTask, "ResetTimerTask", 1000, NULL, 1, &TaskResetTimer);
 
 
 }
@@ -925,6 +1039,16 @@ void MainTask(void *parameter) {
             client.loop();
             mqttTimer.run();
 
+            // MainTask เป็นเจ้าของ client แต่เพียงผู้เดียว จึงมาไล่ประมวลผลคิว/แฟล็กที่ Task อื่นฝากไว้ที่นี่
+            MqttTextMessage queuedMsg;
+            while (mqttMessageQueue != NULL && xQueueReceive(mqttMessageQueue, &queuedMsg, 0) == pdTRUE) {
+                publishMessage(message_topic, String(queuedMsg.text), true);
+            }
+            if (pendingMQTTDataSync) {
+                pendingMQTTDataSync = false;
+                sendMQTTData();
+            }
+
             if (mqttResetNotification) {
                 publishMessage(message_topic, "Reset Notification via MQTT", false);
                 mqttResetNotification = false;
@@ -985,13 +1109,10 @@ void MainTask(void *parameter) {
 
             if (mqttRequestData) {
                 Serial.println("Manual Data Request via MQTT");
-                publishMessage(message_topic, "Manual data update sent", false);
-                
-                sendMQTTData(); // เรียกฟังก์ชันเดิมที่วน loop ให้อยู่แล้ว
-                
-                mqttRequestData = false;
+                publishMessage(message_topic, "Manual data update requested. Polling nodes...", false);
+                // mqttRequestData remains true and will be processed immediately by loop()
                 unsigned long start = millis();
-                while (millis() - start < 1000) {
+                while (millis() - start < 300) {
                     client.loop();
                     delay(10);
                 }
@@ -1003,9 +1124,18 @@ void MainTask(void *parameter) {
 }
 
 void loop() {
+    static unsigned long lastPollCycleTime = 0;
 
-    // Continuously receive data
-    receiveData();  // Call your function to receive data
-    delay(10);
+    // ทำการ Poll ทุกๆ POLL_CYCLE_INTERVAL_MS หรือเมื่อเปิดเครื่อง หรือเมื่อถูกสั่งผ่าน MQTT
+    if (lastPollCycleTime == 0 || (millis() - lastPollCycleTime >= POLL_CYCLE_INTERVAL_MS) || mqttRequestData) {
+        if (mqttRequestData) {
+            Serial.println("Polling triggered immediately via MQTT request_data command!");
+            mqttRequestData = false;
+        }
+        lastPollCycleTime = millis();
+        pollAllNodes();
+    }
+
+    delay(100);
     yield();
 }

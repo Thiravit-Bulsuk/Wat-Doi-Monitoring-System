@@ -12,6 +12,7 @@
 #define NRESET 12
 #define RFBUSY 13
 #define DIO1 14
+#define AUTO_RESET_INTERVAL_MS 43200000UL // 12 ชั่วโมง ป้องกัน heap fragmentation สะสมจากการ forward packet ต่อเนื่องเป็นเวลานาน
 
 const uint32_t Frequency = 923000000;  // Frequency of transmissions
 const uint32_t Offset = 0;             // Offset frequency for calibration purposes
@@ -101,9 +102,6 @@ void onReceive(uint8_t MasterNode, uint8_t ThisNode) {
     int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX); // รับข้อมูลเข้า Buffer
         
     if (packetSize > 0) { // ตรวจสอบว่ามีแพ็กเก็ตเข้ามา
-        // ตรวจสอบขนาดแพ็กเก็ตที่ได้รับ
-        // กรณีที่ 1: packetSize เท่ากับขนาดของ LoRaPacket (อาจจะไม่มี CRC ในการรายงาน)
-        // กรณีที่ 2: packetSize เท่ากับขนาดของ LoRaPacket + 2 (รวม CRC)
         if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
             Serial.println("Received packet (size OK)");
             logStatus = "RX " + String(packetSize) + " bytes";
@@ -115,38 +113,43 @@ void onReceive(uint8_t MasterNode, uint8_t ThisNode) {
             for (int i = 0; i < sizeof(LoRaPacket); i++) {
                 rxBuffer[i] = LT.readUint8();
             }
-            // ถ้า packetSize รวม CRC มาด้วย เราต้องอ่าน 2 ไบต์นั้นทิ้งไป
             if (packetSize == (sizeof(LoRaPacket) + 2)) {
                 LT.readUint8(); // อ่าน CRC byte 1 ทิ้ง
                 LT.readUint8(); // อ่าน CRC byte 2 ทิ้ง
             }
-            LT.endReadSXBuffer(); // End reading from SXBuffer
+            LT.endReadSXBuffer();
 
-            memcpy(&packet, rxBuffer, sizeof(LoRaPacket)); // Copy byte array to struct
+            memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            logLastPacket = "N" + String(packet.sourceNodeID) + " -> N" + String(packet.receiverID);
+            logLastPacket = "Type " + String(packet.messageType) + " | N" + String(packet.senderID) + " -> N" + String(packet.receiverID);
 
-            Serial.print("Repeater: Raw packet data (hex - payload only): ");
-            for (int i = 0; i < sizeof(LoRaPacket); i++) { // Print only payload bytes
-                Serial.printf("%02X ", rxBuffer[i]);
+            Serial.printf("Repeater RX: Type=%d, Sender=%d, Recv=%d, Target/Source=%d, Val=%d, Bat=%.2fV\n",
+                          packet.messageType, packet.senderID, packet.receiverID, packet.sourceNodeID, packet.value, packet.battery);
+
+            bool shouldForward = false;
+            LoRaPacket forwardPacket = packet;
+            forwardPacket.senderID = ThisNode; // 101
+
+            // กรณีที่ 1: Downlink (Master ขอข้อมูลไปยัง Data Node)
+            if (packet.messageType == MSG_TYPE_POLL_REQ && packet.receiverID == ThisNode) {
+                forwardPacket.receiverID = packet.sourceNodeID; // ส่งต่อไปยัง Node ปลายทาง
+                logAction = "Fwd Poll -> N" + String(packet.sourceNodeID);
+                Serial.println("Repeater: Forwarding POLL_REQ to Node " + String(packet.sourceNodeID));
+                shouldForward = true;
             }
-            Serial.println();
+            // กรณีที่ 2: Uplink (Data Node ส่งข้อมูลกลับมาให้ Repeater เพื่อส่งต่อให้ Master)
+            else if ((packet.messageType == MSG_TYPE_WATER || packet.messageType == MSG_TYPE_SPD) && packet.receiverID == ThisNode) {
+                forwardPacket.receiverID = MasterNode; // ส่งต่อไปยัง Master (100)
+                logAction = "Fwd Data N" + String(packet.sourceNodeID) + " -> Master";
+                Serial.println("Repeater: Forwarding Data from Node " + String(packet.sourceNodeID) + " to Master");
+                shouldForward = true;
+            } else {
+                Serial.println("Repeater: Packet ignored (not addressed to this repeater).");
+                logAction = "Ignored";
+            }
 
-            Serial.print("Repeater: Received packet.receiverID = "); Serial.println(packet.receiverID);
-            Serial.print("Repeater: ThisNode = "); Serial.println(ThisNode);
-            Serial.print("Repeater: sizeof(LoRaPacket) = "); Serial.println(sizeof(LoRaPacket));
-
-            if (packet.receiverID == ThisNode) {
-                Serial.print("Message from Node "); Serial.print(packet.sourceNodeID);
-                Serial.print(": "); Serial.println(packet.value);
-                logAction = "Forwarding...";
-
-                delay(1000);
-
-                // Prepare packet for forwarding
-                LoRaPacket forwardPacket = packet; // Copy received packet
-                forwardPacket.receiverID = MasterNode; // เปลี่ยนผู้รับเป็น Master (100)
-                forwardPacket.senderID = ThisNode;     // เปลี่ยนผู้ส่งเป็นตัวมันเอง (10)
+            if (shouldForward) {
+                delay(100); // หน่วงเวลาเล็กน้อยเพื่อความเสถียรของช่องสัญญาณ
 
                 uint8_t txForwardBuffer[sizeof(LoRaPacket)];
                 memcpy(txForwardBuffer, &forwardPacket, sizeof(LoRaPacket));
@@ -160,28 +163,17 @@ void onReceive(uint8_t MasterNode, uint8_t ThisNode) {
                 uint8_t TXPacketL = LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 
                 if (TXPacketL == 0) {
-                  Serial.println("Error: Failed to send data");
-                  logAction = "Send Failed";
+                    Serial.println("Error: Failed to forward packet");
+                    logAction = "Fwd Failed";
                 } else {
-                    Serial.println("Data sent successfully");
-                    Serial.println("Data forwarded to Master Node.");
-                    logAction = "Forwarded OK";
-                    
+                    Serial.println("Packet forwarded successfully.");
+                    logAction = "Fwd OK";
                 }
-            } else {
-                Serial.println("Message does not meet criteria, ignoring.");
-                logAction = "Ignored";
-                Serial.print("Repeater: Received packet.receiverID = "); Serial.print(packet.receiverID);
-                Serial.print(", Expected ThisNode = "); Serial.println(ThisNode);
-                Serial.print("Repeater: sizeof(LoRaPacket) = "); Serial.println(sizeof(LoRaPacket));
             }
         } else {
-            Serial.print("Received packet with unexpected size: "); Serial.print(packetSize); Serial.print(" bytes. Expected "); Serial.print(sizeof(LoRaPacket)); Serial.print(" or "); Serial.print(sizeof(LoRaPacket) + 2); Serial.println(" bytes. Ignoring.");
-            LT.endReadSXBuffer(); // Clear any pending read operations
+            Serial.print("Received packet with unexpected size: "); Serial.println(packetSize);
+            LT.endReadSXBuffer();
         }
-    } else if (packetSize > 0) {
-        Serial.print("Received packet with unexpected size: "); Serial.print(packetSize); Serial.print(" bytes. Expected "); Serial.print(sizeof(LoRaPacket)); Serial.print(" or "); Serial.print(sizeof(LoRaPacket) + 2); Serial.println(" bytes. Ignoring.");
-        LT.endReadSXBuffer(); // Clear any pending read operations
     }
 }
 
@@ -206,6 +198,11 @@ void setup() {
 }
 
 void loop() {
+    if (millis() >= AUTO_RESET_INTERVAL_MS) {
+        Serial.println("Auto-reset: 12h uptime reached, restarting...");
+        ESP.restart();
+    }
+
     logStatus = "Listening...";
     onReceive(100, 101);
 }

@@ -34,6 +34,7 @@ const int8_t TXpower = 2;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE 1
 #define REPEATER_NODE 101
+#define AUTO_RESET_INTERVAL_MS 43200000UL // 12 ชั่วโมง ป้องกัน heap fragmentation สะสมจากการรันต่อเนื่องเป็นเวลานาน
 
 SX126XLT LT;
 
@@ -224,20 +225,68 @@ float readDistance() {
     return -1.0; // ถ้าลองครบแล้วยังไม่ได้ผล ให้คืนค่า Error
 }
 
+// Function to measure water level and compute percentage
+uint8_t measureAndCalculatePercentage() {
+    VextON();
+    float distance = readDistance();
+    VextOFF();
+
+    uint8_t percentage = 0;
+
+    // Layer 2: Sanity Check & History
+    if (distance < 0) {
+        Serial.println("Result: Error (-1)");
+        if (lastValidDistance > (TANK_EMPTY_CM - 40)) {
+            Serial.println("History says Empty. Confirming 0%.");
+            isTankEmpty = true;
+            percentage = 0;
+        } else {
+            Serial.println("History says Full. Using last percentage.");
+            percentage = lastPercentage;
+        }
+        refillConfirmationCount = 0;
+    } else {
+        Serial.print("Result: Valid ("); Serial.print(distance); Serial.println(" cm)");
+        
+        if (isTankEmpty) {
+            refillConfirmationCount++;
+            Serial.print("Potential Refill Detected. Count: "); Serial.println(refillConfirmationCount);
+            
+            if (refillConfirmationCount >= REFILL_THRESHOLD) {
+                Serial.println("Refill Confirmed!");
+                isTankEmpty = false;
+                lastValidDistance = distance;
+                long calc = map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0);
+                percentage = (uint8_t)constrain(calc, 0, 100);
+                refillConfirmationCount = 0;
+            } else {
+                Serial.println("Waiting for confirmation...");
+                percentage = 0;
+            }
+        } else {
+            lastValidDistance = distance;
+            long calc = map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0);
+            percentage = (uint8_t)constrain(calc, 0, 100);
+            refillConfirmationCount = 0;
+        }
+    }
+
+    lastPercentage = percentage;
+    return percentage;
+}
+
 // Function to send data
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint8_t percentage) {
-    smartDelay(1000); // Use smartDelay to allow button check
-
     LoRaPacket packet;
     packet.messageType = MessageType;
     packet.receiverID = RepeaterNode;
-    packet.senderID = tankID;    // สำหรับ Data Node, senderID กับ sourceNodeID คือตัวเดียวกัน
+    packet.senderID = tankID;
     packet.sourceNodeID = tankID;
     packet.value = percentage;
-    packet.battery = 0.0;        // หากยังไม่ได้ต่อเซ็นเซอร์วัดแบต ให้ใส่ 0 ไว้ก่อน
+    packet.battery = 0.0;
 
     uint8_t txBuffer[sizeof(LoRaPacket)];
-    memcpy(txBuffer, &packet, sizeof(LoRaPacket)); // Copy struct to byte array
+    memcpy(txBuffer, &packet, sizeof(LoRaPacket));
 
     Serial.print("Sending Data: TankID="); Serial.print(tankID); Serial.print(", %="); Serial.println(percentage);
     
@@ -250,9 +299,20 @@ uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint
     return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 }
 
+// Task แยกต่างหากจาก loop() เพื่อให้ปุ่มกดตอบสนองได้แม้ขณะ loop() จะติดอยู่ใน receiveSXBuffer(WAIT_RX)
+void ButtonTask(void *parameter) {
+    for (;;) {
+        if (digitalRead(PRG_BUTTON) == LOW) {
+            showStatus();
+            while (digitalRead(PRG_BUTTON) == LOW) vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+}
+
 void setup() {
     Serial.begin(115200);
-    Serial.println("Data Node 1 (JD) Initializing...");
+    Serial.println("Data Node 1 (JD) - Polling Mode Initializing...");
 
     SPI.begin();
     delay(500);
@@ -261,103 +321,53 @@ void setup() {
     pinMode(ECHO_PIN, INPUT);
     pinMode(PRG_BUTTON, INPUT_PULLUP);
     
-    // ตรวจสอบว่าตื่นเพราะกดปุ่มหรือไม่
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
-        showStatus(); // แสดงสถานะแล้วทำงานต่อ
-    }
+    VextOFF();
 
-    // เริ่มต้นกระบวนการวัดค่า (ย้ายจาก loop มาไว้ setup)
-    VextON();
-    float distance = readDistance();
-    
-    bool shouldSendZero = false;
-    bool shouldSendValue = false;
-
-    // Layer 2: Sanity Check & History
-    if (distance < 0) {
-        Serial.println("Result: Error (-1)");
-        // ถ้าอ่านค่าไม่ได้ ให้ดูประวัติ (JD Empty is 390)
-        if (lastValidDistance > (TANK_EMPTY_CM - 40)) {
-            Serial.println("History says Empty. Confirming 0%.");
-            isTankEmpty = true;
-            shouldSendZero = true;
-        } else {
-            Serial.println("History says Full. Ignoring Error (Sensor Fault/Noise).");
-        }
-        refillConfirmationCount = 0; // รีเซ็ตตัวนับยืนยัน
-    } else {
-        Serial.print("Result: Valid ("); Serial.print(distance); Serial.println(" cm)");
-        
-        if (isTankEmpty) {
-            // กรณีเดิมน้ำหมด ตอนนี้เริ่มอ่านค่าได้ (Refilling?)
-            refillConfirmationCount++;
-            Serial.print("Potential Refill Detected. Count: "); Serial.println(refillConfirmationCount);
-            
-            if (refillConfirmationCount >= REFILL_THRESHOLD) {
-                Serial.println("Refill Confirmed!");
-                isTankEmpty = false;
-                lastValidDistance = distance;
-                shouldSendValue = true;
-                refillConfirmationCount = 0;
-            } else {
-                Serial.println("Waiting for confirmation...");
-                shouldSendZero = true; // ยังคงส่ง 0% จนกว่าจะยืนยันครบ
-            }
-        } else {
-            // กรณีปกติ (Normal Operation)
-            lastValidDistance = distance;
-            shouldSendValue = true;
-            refillConfirmationCount = 0;
-        }
-    }
-
-    // เริ่มต้น LoRa เฉพาะตอนจะส่งข้อมูล
     if (!initLoRa()) {
         Serial.println("Critical Error: LoRa initialization failed.");
-    } else {
-        LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
-
-    // Action based on Logic
-    if (shouldSendZero) {
-        lastPercentage = 0;
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 1, 0);
-        int randomDelay1 = random(10000, 20000);  
-        smartDelay(randomDelay1);
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 1, 0);
-    } else if (shouldSendValue) {
-        long calc_percentage = map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0); 
-        calc_percentage = constrain(calc_percentage, 0, 100);
-        uint8_t percentage = (uint8_t)calc_percentage;
-        Serial.print("Calculated Percentage: "); Serial.println(percentage);
-        lastPercentage = percentage;
-        Serial.println("Sending Packet 1...");
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 1, percentage);
-        int randomDelay1 = random(10000, 20000);  
-        Serial.print("Waiting random delay: "); Serial.println(randomDelay1);
-        smartDelay(randomDelay1);
-        Serial.println("Sending Packet 2...");
-        sendData(MESSAGE_TYPE, REPEATER_NODE, 1, percentage);
+        while (1);
     }
-    } // End LoRa block
 
-    VextOFF();
-    
-    // เตรียมตัวหลับ (Deep Sleep)
-    LT.setSleep(CONFIGURATION_RETENTION);   // Preserve register settings in sleep.
-    Serial.println("LoRa set to Sleep");
-    Serial.println("Entering Deep Sleep (5 mins)...");
-    Serial.flush();
+    LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
+    Serial.println("LoRa setup complete. Listening for poll requests...");
 
-    // ตั้งค่าการตื่น
-    // 1. ตื่นด้วยปุ่มกด (GPIO 0 เป็น LOW)
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0); 
-    
-    // 2. ตื่นด้วยเวลา (5 นาที + สุ่มเล็กน้อยเพื่อกันชนกัน)
-    uint64_t sleepTime = 300000ULL * 1000ULL; // 5 นาที (หน่วยไมโครวินาที)
-    sleepTime += random(1000, 30000) * 1000ULL; // เพิ่ม Random Jitter 1-30 วินาที
-    esp_sleep_enable_timer_wakeup(sleepTime);
-
-    esp_deep_sleep_start(); // หลับยาว
+    xTaskCreate(ButtonTask, "ButtonTask", 4096, NULL, 1, NULL);
 }
 
-void loop() {}
+void loop() {
+    if (millis() >= AUTO_RESET_INTERVAL_MS) {
+        Serial.println("Auto-reset: 12h uptime reached, restarting...");
+        ESP.restart();
+    }
+
+    // ฟังคำขอ Poll Request จาก Master ผ่าน Repeater
+    int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
+    if (packetSize > 0) {
+        if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+            LoRaPacket packet;
+            uint8_t rxBuffer[sizeof(LoRaPacket)];
+
+            LT.startReadSXBuffer(0);
+            for (int i = 0; i < sizeof(LoRaPacket); i++) {
+                rxBuffer[i] = LT.readUint8();
+            }
+            if (packetSize == (sizeof(LoRaPacket) + 2)) {
+                LT.readUint8();
+                LT.readUint8();
+            }
+            LT.endReadSXBuffer();
+
+            memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
+
+            // หากเป็นคำขอ POLL_REQ ที่ส่งมาถึง Node 1
+            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == 1 || packet.sourceNodeID == 1)) {
+                Serial.println("Received POLL_REQ for Node 1. Measuring...");
+                uint8_t pct = measureAndCalculatePercentage();
+                delay(50); // หน่วงเวลาสั้นๆ ก่อนส่งตอบกลับ
+                sendData(MESSAGE_TYPE, REPEATER_NODE, 1, pct);
+            }
+        } else {
+            LT.endReadSXBuffer();
+        }
+    }
+}

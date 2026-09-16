@@ -32,6 +32,7 @@ const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE_SPD 2
 #define REPEATER_NODE 101
+#define AUTO_RESET_INTERVAL_MS 43200000UL // 12 ชั่วโมง ป้องกัน heap fragmentation สะสมจากการรันต่อเนื่องเป็นเวลานาน
 
 SX126XLT LT;
 
@@ -107,20 +108,18 @@ bool readSPDStatus() {
 
 // Function to send data
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t NodeID, uint8_t status) {
-    delay(1000);
-
     LoRaPacket packet;
     packet.messageType = MessageType;
     packet.receiverID = RepeaterNode;
     packet.senderID = NodeID;
     packet.sourceNodeID = NodeID;
-    packet.value = status; // ส่งค่าสถานะ (0 หรือ 1)
+    packet.value = status; // ส่งค่าสถานะ (0 = ปกติ, 1 = เสีย)
     packet.battery = 0.0;
 
     uint8_t txBuffer[sizeof(LoRaPacket)];
-    memcpy(txBuffer, &packet, sizeof(LoRaPacket)); // Copy struct to byte array
+    memcpy(txBuffer, &packet, sizeof(LoRaPacket));
 
-    Serial.println(status == 1 ? "SPD Failed" : "SPD Working");
+    Serial.printf("Sending Data: Node=%d, SPD=%s\n", NodeID, status == 1 ? "FAILED" : "OK");
 
     LT.startWriteSXBuffer(0);
     for (int i = 0; i < sizeof(LoRaPacket); i++) {
@@ -131,59 +130,74 @@ uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t NodeID, uint
     return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 }
 
+// Task แยกต่างหากจาก loop() เพื่อให้ปุ่มกดตอบสนองได้แม้ขณะ loop() จะติดอยู่ใน receiveSXBuffer(WAIT_RX)
+void ButtonTask(void *parameter) {
+    for (;;) {
+        if (digitalRead(PRG_BUTTON) == LOW) {
+            showStatus();
+            while (digitalRead(PRG_BUTTON) == LOW) vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+}
+
 void setup() {
     Serial.begin(115200);
-    Serial.println("Data Node 20 (NongPog) Initializing...");
+    Serial.println("Data Node 20 (NongPog) - Polling Mode Initializing...");
 
     SPI.begin();
     delay(500);
 
     pinMode(PRG_BUTTON, INPUT_PULLUP);
-    pinMode(SPD_PIN, INPUT_PULLUP);  // Use internal pull-up resistor
-
-    // ตรวจสอบว่าตื่นเพราะกดปุ่มหรือไม่
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
-        showStatus(); // แสดงสถานะแล้วทำงานต่อ
-    }
+    pinMode(SPD_PIN, INPUT_PULLUP);
+    
+    VextOFF();
 
     if (!initLoRa()) {
-        Serial.println("Critical Error: LoRa initialization failed. System halting.");
-        // ถ้า LoRa พัง ให้หลับไปก่อนแล้วค่อยตื่นมาลองใหม่
-    } else {
-        LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
-        
-        // Random delay to prevent communication collisions (เฉพาะตอนทำงานปกติ ไม่ใช่ตอนกดปุ่มดู)
-        if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_EXT0) {
-            int randomDelay = random(1000, 30000);  
-            delay(randomDelay);
-        }
-
-        bool failed = readSPDStatus();
-        uint8_t status = failed ? 1 : 0;  // Convert bool to uint8_t for transmission
-        
-        // Send SPD status twice (to ensure successful transmission)
-        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 20, status);  
-        delay(random(1000, 5000));  
-        sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 20, status);  
+        Serial.println("Critical Error: LoRa initialization failed.");
+        while (1);
     }
 
-    VextOFF();
-    
-    // Put LoRa module to sleep to save power
-    LT.setSleep(CONFIGURATION_RETENTION);   
-    Serial.println("LoRa Sleeping zzzzz....");
-    
-    // Put ESP32 into deep sleep for 5 minutes (300000 ms)
-    uint64_t sleepTime = 300000ULL * 1000ULL; // 5 นาที
-    sleepTime += random(1000, 30000) * 1000ULL; // Random Jitter
-    esp_sleep_enable_timer_wakeup(sleepTime);
-    
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0); // ตื่นด้วยปุ่มกด
+    LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
+    Serial.println("LoRa setup complete. Listening for poll requests...");
 
-    Serial.println("ESP32 Sleeping zzzzz....");
-    
-    Serial.flush();
-    esp_deep_sleep_start();  // Enter deep sleep
+    xTaskCreate(ButtonTask, "ButtonTask", 4096, NULL, 1, NULL);
 }
 
-void loop() {}
+void loop() {
+    if (millis() >= AUTO_RESET_INTERVAL_MS) {
+        Serial.println("Auto-reset: 12h uptime reached, restarting...");
+        ESP.restart();
+    }
+
+    // Listen for Master poll requests
+    int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
+    if (packetSize > 0) {
+        if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+            LoRaPacket packet;
+            uint8_t rxBuffer[sizeof(LoRaPacket)];
+
+            LT.startReadSXBuffer(0);
+            for (int i = 0; i < sizeof(LoRaPacket); i++) {
+                rxBuffer[i] = LT.readUint8();
+            }
+            if (packetSize == (sizeof(LoRaPacket) + 2)) {
+                LT.readUint8();
+                LT.readUint8();
+            }
+            LT.endReadSXBuffer();
+
+            memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
+
+            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == 20 || packet.sourceNodeID == 20)) {
+                Serial.println("Received POLL_REQ for Node 20 (SPD). Reading status...");
+                bool failed = readSPDStatus();
+                uint8_t status = failed ? 1 : 0;
+                delay(50);
+                sendData(MESSAGE_TYPE_SPD, REPEATER_NODE, 20, status);
+            }
+        } else {
+            LT.endReadSXBuffer();
+        }
+    }
+}

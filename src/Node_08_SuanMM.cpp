@@ -34,6 +34,7 @@ const int8_t TXpower = 14;                      // ปรับเป็น 14 d
 
 #define MESSAGE_TYPE 1
 #define REPEATER_NODE 101
+#define AUTO_RESET_INTERVAL_MS 43200000UL // 12 ชั่วโมง ป้องกัน heap fragmentation สะสมจากการรันต่อเนื่องเป็นเวลานาน
 #define NODE_ID 8       // หมายเลข Node SuanMM
 
 SX126XLT LT;
@@ -189,8 +190,45 @@ float readDistance() {
     return -1.0;
 }
 
+// Function to measure water level and compute percentage
+uint8_t measureAndCalculatePercentage() {
+    VextON();
+    float distance = readDistance();
+    VextOFF();
+
+    uint8_t percentage = 0;
+
+    if (distance < 0) {
+        if (lastValidDistance > (TANK_EMPTY_CM - 20)) {
+            isTankEmpty = true;
+            percentage = 0;
+        } else {
+            percentage = lastPercentage;
+        }
+        refillConfirmationCount = 0;
+    } else {
+        if (isTankEmpty) {
+            if (++refillConfirmationCount >= REFILL_THRESHOLD) {
+                isTankEmpty = false;
+                lastValidDistance = distance;
+                long p = map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0);
+                percentage = (uint8_t)constrain(p, 0, 100);
+                refillConfirmationCount = 0;
+            } else {
+                percentage = 0;
+            }
+        } else {
+            lastValidDistance = distance;
+            long p = map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0);
+            percentage = (uint8_t)constrain(p, 0, 100);
+            refillConfirmationCount = 0;
+        }
+    }
+    lastPercentage = percentage;
+    return percentage;
+}
+
 uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint8_t percentage) {
-    smartDelay(1000);
     LoRaPacket packet;
     packet.messageType = MessageType;
     packet.receiverID = RepeaterNode;
@@ -202,6 +240,8 @@ uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint
     uint8_t txBuffer[sizeof(LoRaPacket)];
     memcpy(txBuffer, &packet, sizeof(LoRaPacket));
 
+    Serial.printf("Sending Data: Node=%d, %=%d\n", tankID, percentage);
+
     LT.startWriteSXBuffer(0);
     for (int i = 0; i < sizeof(LoRaPacket); i++) {
         LT.writeUint8(txBuffer[i]);
@@ -210,57 +250,74 @@ uint8_t sendData(uint8_t MessageType, uint8_t RepeaterNode, uint8_t tankID, uint
     return LT.transmitSXBuffer(0, (len + 2), 5000, TXpower, WAIT_TX);
 }
 
+// Task แยกต่างหากจาก loop() เพื่อให้ปุ่มกดตอบสนองได้แม้ขณะ loop() จะติดอยู่ใน receiveSXBuffer(WAIT_RX)
+void ButtonTask(void *parameter) {
+    for (;;) {
+        if (digitalRead(PRG_BUTTON) == LOW) {
+            showStatus();
+            while (digitalRead(PRG_BUTTON) == LOW) vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+}
+
 void setup() {
     Serial.begin(115200);
+    Serial.println("Data Node 8 (SuanMM) - Polling Mode Initializing...");
+
     SPI.begin();
+    delay(500);
+
     pinMode(TRIGGER_PIN, OUTPUT);
     pinMode(ECHO_PIN, INPUT);
     pinMode(PRG_BUTTON, INPUT_PULLUP);
     
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
-        showStatus();
-    }
-
-    VextON();
-    float distance = readDistance();
-    bool shouldSendZero = false;
-    bool shouldSendValue = false;
-
-    if (distance < 0) {
-        if (lastValidDistance > (TANK_EMPTY_CM - 20)) {
-            isTankEmpty = true;
-            shouldSendZero = true;
-        }
-        refillConfirmationCount = 0;
-    } else {
-        if (isTankEmpty) {
-            if (++refillConfirmationCount >= REFILL_THRESHOLD) {
-                isTankEmpty = false;
-                lastValidDistance = distance;
-                shouldSendValue = true;
-                refillConfirmationCount = 0;
-            } else { shouldSendZero = true; }
-        } else {
-            lastValidDistance = distance;
-            shouldSendValue = true;
-            refillConfirmationCount = 0;
-        }
-    }
-
-    if (initLoRa()) {
-        LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
-        uint8_t p = shouldSendZero ? 0 : map(lastValidDistance, TANK_FULL_CM, TANK_EMPTY_CM, 100, 0);
-        p = constrain(p, 0, 100);
-        sendData(MESSAGE_TYPE, REPEATER_NODE, NODE_ID, p);
-        smartDelay(random(10000, 20000));
-        sendData(MESSAGE_TYPE, REPEATER_NODE, NODE_ID, p);
-    }
-
     VextOFF();
-    LT.setSleep(CONFIGURATION_RETENTION);
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0); 
-    esp_sleep_enable_timer_wakeup(300000ULL * 1000ULL + random(1000, 30000) * 1000ULL);
-    esp_deep_sleep_start();
+
+    if (!initLoRa()) {
+        Serial.println("Critical Error: LoRa initialization failed.");
+        while (1);
+    }
+
+    LT.setupLoRa(Frequency, Offset, SpreadingFactor, Bandwidth, CodeRate, Optimisation);
+    Serial.println("LoRa setup complete. Listening for poll requests...");
+
+    xTaskCreate(ButtonTask, "ButtonTask", 4096, NULL, 1, NULL);
 }
 
-void loop() {}
+void loop() {
+    if (millis() >= AUTO_RESET_INTERVAL_MS) {
+        Serial.println("Auto-reset: 12h uptime reached, restarting...");
+        ESP.restart();
+    }
+
+    // Listen for Master poll requests
+    int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
+    if (packetSize > 0) {
+        if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+            LoRaPacket packet;
+            uint8_t rxBuffer[sizeof(LoRaPacket)];
+
+            LT.startReadSXBuffer(0);
+            for (int i = 0; i < sizeof(LoRaPacket); i++) {
+                rxBuffer[i] = LT.readUint8();
+            }
+            if (packetSize == (sizeof(LoRaPacket) + 2)) {
+                LT.readUint8();
+                LT.readUint8();
+            }
+            LT.endReadSXBuffer();
+
+            memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
+
+            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == NODE_ID || packet.sourceNodeID == NODE_ID)) {
+                Serial.println("Received POLL_REQ for Node 8 (SuanMM). Measuring...");
+                uint8_t pct = measureAndCalculatePercentage();
+                delay(50);
+                sendData(MESSAGE_TYPE, REPEATER_NODE, NODE_ID, pct);
+            }
+        } else {
+            LT.endReadSXBuffer();
+        }
+    }
+}
