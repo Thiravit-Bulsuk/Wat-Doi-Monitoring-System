@@ -405,7 +405,8 @@ void loop() {
 
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == 4 || packet.sourceNodeID == 4)) {
+            // เช็คเฉพาะ receiverID เพราะ field นี้ถูก Repeater เขียนใหม่ตอน forward เท่านั้น
+            if (packet.messageType == MSG_TYPE_POLL_REQ && packet.receiverID == 4) {
                 Serial.println("Received POLL_REQ for Node 4 (ThamYai). Measuring...");
                 globalBatteryVoltage = readBatteryVoltage();
                 uint8_t pct = measureAndCalculatePercentage();

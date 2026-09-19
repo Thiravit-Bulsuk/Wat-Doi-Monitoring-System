@@ -369,16 +369,17 @@ void loop() {
 
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
+            // เช็คเฉพาะ receiverID เพราะ field นี้ถูก Repeater เขียนใหม่ตอน forward เท่านั้น
             if (packet.messageType == MSG_TYPE_POLL_REQ) {
                 // Request for Tank 2 (PhraNon)
-                if (packet.receiverID == TANK2_ID || packet.sourceNodeID == TANK2_ID) {
+                if (packet.receiverID == TANK2_ID) {
                     Serial.println("Received POLL_REQ for Tank 2 (PhraNon). Measuring...");
                     uint8_t pct = measureTank2();
                     delay(50);
                     sendData(MESSAGE_TYPE, REPEATER_NODE, TANK2_ID, pct);
                 }
                 // Request for Tank 3 (Plastic)
-                else if (packet.receiverID == TANK3_ID || packet.sourceNodeID == TANK3_ID) {
+                else if (packet.receiverID == TANK3_ID) {
                     Serial.println("Received POLL_REQ for Tank 3 (Plastic). Measuring...");
                     uint8_t pct = measureTank3();
                     delay(50);

@@ -13,10 +13,14 @@ enum AlertState {
 // ประเภทของข้อมูลที่ส่ง
 #define MSG_TYPE_WATER     1  // ข้อมูลระดับน้ำ
 #define MSG_TYPE_SPD       2  // ข้อมูลสถานะกันฟ้าผ่า
+#define MSG_TYPE_LINK_QUALITY  3  // ข้อมูลคุณภาพลิงก์
 #define MSG_TYPE_POLL_REQ  10 // คำขออ่านข้อมูลจาก Master (Request / Polling)
 
 // ค่าคงที่สำหรับการ Polling & Retry
-#define POLL_TIMEOUT_MS         4500  // ระยะเวลารอตอบกลับต่อครั้ง (4.5 วินาที)
+// หมายเหตุ: ที่ SF12/BW125 การส่งข้อมูล 1 ครั้ง (LoRaPacket 8 ไบต์) ใช้เวลา on-air ~1 วินาที
+// รอบ Poll หนึ่งครั้งต้องส่งถึง 4 hop (Master->Repeater->Node->Repeater->Master) รวมเวลาวัดค่าเซนเซอร์ที่ Node
+// จึงต้องตั้ง timeout ให้เผื่อเวลาไว้มากพอ ไม่เช่นนั้นจะ timeout ทุกครั้งแม้สัญญาณจะดีก็ตาม
+#define POLL_TIMEOUT_MS         9000  // ระยะเวลารอตอบกลับต่อครั้ง (9 วินาที)
 #define MAX_POLL_RETRIES        2     // จำนวนครั้งที่ลองส่งซ้ำหากไม่ตอบกลับ (รวมเป็น 3 ครั้ง)
 #define POLL_CYCLE_INTERVAL_MS  180000 // รอบเวลาการ Polling ทุกโหนด (3 นาที)
 
@@ -46,6 +50,8 @@ struct Node {
     volatile AlertState alertState; // สถานะแจ้งเตือน (Normal / Alert)
     volatile AlertState commState;  // สถานะการสื่อสาร (Normal / Error)
     volatile int lowCount;      // ตัวนับสำหรับ Debounce
+    volatile bool batteryAlertSent; // กันแจ้งเตือนแบตเตอรี่ต่ำซ้ำๆ (ส่งครั้งเดียวจนกว่าแบตจะกลับมาปกติ)
+    volatile uint8_t commFailureCount; // จำนวนรอบ Poll ที่ไม่ตอบติดต่อกัน
 };
 
 #endif

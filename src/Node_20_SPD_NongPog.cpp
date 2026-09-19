@@ -189,7 +189,8 @@ void loop() {
 
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == 20 || packet.sourceNodeID == 20)) {
+            // เช็คเฉพาะ receiverID เพราะ field นี้ถูก Repeater เขียนใหม่ตอน forward เท่านั้น
+            if (packet.messageType == MSG_TYPE_POLL_REQ && packet.receiverID == 20) {
                 Serial.println("Received POLL_REQ for Node 20 (SPD). Reading status...");
                 bool failed = readSPDStatus();
                 uint8_t status = failed ? 1 : 0;

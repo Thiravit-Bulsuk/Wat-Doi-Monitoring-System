@@ -310,7 +310,8 @@ void loop() {
 
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == NODE_ID || packet.sourceNodeID == NODE_ID)) {
+            // เช็คเฉพาะ receiverID เพราะ field นี้ถูก Repeater เขียนใหม่ตอน forward เท่านั้น
+            if (packet.messageType == MSG_TYPE_POLL_REQ && packet.receiverID == NODE_ID) {
                 Serial.println("Received POLL_REQ for Node 6 (TaiFa). Measuring...");
                 uint8_t pct = measureAndCalculatePercentage();
                 delay(50);

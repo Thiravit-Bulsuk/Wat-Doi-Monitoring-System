@@ -14,6 +14,7 @@
 #include <freertos/queue.h>
 
 void sendLineMessage(String message);
+void sendAdminMessage(String message);
 void resetSystem();
 void ResetTimerTask(void *parameter);
 void IRAM_ATTR handleButtonPress();
@@ -27,7 +28,6 @@ void resetNotification();
 void VextON(void);
 void VextOFF(void);
 void displayData(String tankName, String message);
-void CheckCommError();
 void DisplayTimerTask(void *pvParameters);
 void reconnect();
 void callback(char* topic, byte* payload, unsigned int length);
@@ -35,7 +35,7 @@ void publishMessage(const char* topic, String payload , boolean retained);
 void sendMQTTData();
 bool checkInternetConnection();
 void MainTask(void *parameter);
-void ButtonTask(void *parameter);
+void DisplayControlButtonTask(void *parameter);
 void handleNodeRecovery(int nodeIdx);
 void enqueueLineTextMessage(const String &message);
 
@@ -51,8 +51,8 @@ SimpleTimer mqttTimer;
 
 // ตัวแปรสำหรับสถานะการแสดงผล (วนรอบระหว่าง 0-12)
 // ตัวแปร global track state และพักหน้าจอ
-volatile int displayState = 0;         // 0..12 คือข้อมูลแต่ละหน้า
-volatile int activeNodeIdx = 0;        // ตัวชี้ Node ที่กำลังแสดงผล
+volatile int displayPageState = 0;     // 0..12 คือข้อมูลแต่ละหน้า
+volatile int displayNodeIndex = 0;     // ตัวชี้ Node ที่กำลังแสดงผล
 const TickType_t displayInterval = 3500 / portTICK_PERIOD_MS; // 3500 ms
 const TickType_t pauseInterval   = 500 / portTICK_PERIOD_MS;  // 100 ms
 
@@ -62,17 +62,16 @@ unsigned long lastStateChange = 0;  // เก็บเวลาที่เป�
 volatile bool internetConnected = false;  // กำหนดค่าเริ่มต้นตามสถานะจริงของเน็ต
 
 // ==== System Timing Constants ====
-const unsigned long OBSERVATION_WINDOW = 300000;    // 5 นาที (รอเช็คจำนวน Node ที่เสียพร้อมกัน)
 const unsigned long RECOVERY_GRACE_PERIOD = 900000; // 15 นาที (งดแจ้งเตือนราย Node หลัง Repeater ฟื้น)
 const unsigned long mqttSendInterval = 600000;      // 10 นาที (รอบการส่งข้อมูลขึ้น MQTT)
-const unsigned long commTimeout = 3000000;          // เพิ่มเป็น 50 นาที เพื่อลดความไวในการแจ้งเตือนขัดข้อง
-const unsigned long REPEATER_TIMEOUT = 600000;      // 10 นาที (เวลาที่ไม่ได้รับข้อมูลจาก Repeater ถือว่า Repeater อาจลง)
-const float BATTERY_LOW_THRESHOLD = 3.50;           // แจ้งเตือนเมื่อแบตเตอรี่ต่ำกว่า 3.5V
+const float BATTERY_LOW_THRESHOLD = 2.40;           // แจ้งเตือนเมื่อแบตเตอรี่ต่ำกว่า 2.4V
+const float BATTERY_RECOVER_THRESHOLD = 3.50;        // ต้องขึ้นเกิน 3.5V ก่อนถึงจะถือว่ากลับมาปกติ (กันแจ้งเตือนรัวๆ ที่ค่าแกว่งใกล้ threshold)
 
 // ==== LINE Messaging API Settings ====
 const char* LINE_ACCESS_TOKEN = "Vv9JoO8Af3WbpW3iozJEmzXj0IdGRVHruYM1TE6umoFn5OWqTDelb05Pm0oah8FmHV/lDx0pmmLDm5HZ6umXSWJV8zrmh4c8wtpZcCLObqdUWqPdOYN1XKG+GoPN0A6BBW+fNXY/s2AEJA1HQR1HkQdB04t89/1O/w1cDnyilFU="; // ใส่ Channel Access Token ของคุณ
 const char* LINE_API_URL = "https://api.line.me/v2/bot/message/push";
-const char* LINE_USER_ID = "C193952f60a4c2951926955db63570e03"; // ใส่ LINE User ID ที่ต้องการให้ส่งข้อความหา
+const char* LINE_USER_ID = "C193952f60a4c2951926955db63570e03"; // ผู้ใช้งานทั่วไป: รับแจ้งเตือนระดับน้ำ/สถานะ SPD
+const char* LINE_ADMIN_USER_ID = "U0720e492fea7d9381686207703f98e19"; // Admin: รับแจ้งเตือนการทำงานของระบบ (Comm Error, Repeater, แบตเตอรี่)
 
 //---- MQTT Broker settings
 const char* mqtt_server = "aa9e03df167b40b086069a385503cf2f.s1.eu.hivemq.cloud"; // replace with your broker url
@@ -93,8 +92,8 @@ QueueHandle_t mqttMessageQueue = NULL;
 // แฟล็กขอให้ MainTask เรียก sendMQTTData() รอบถัดไป (ตั้งจาก Task อื่นได้ อ่าน/เคลียร์โดย MainTask เท่านั้น)
 volatile bool pendingMQTTDataSync = false;
 
-unsigned long suspectedCommTime = 0; // ตัวแปรสำหรับเก็บเวลาที่เริ่มพบปัญหาการสื่อสารครั้งแรก
 bool repeaterErrorActive = false;    // สถานะแจ้งเตือน Repeater ขัดข้อง
+uint8_t repeaterFailureCount = 0;    // จำนวนรอบที่ไม่มี Node ใดตอบติดต่อกัน
 unsigned long lastRepeaterRecoveryTime = 0; // เวลาที่ Repeater กลับมาปกติครั้งล่าสุด
 unsigned long lastMsg = 0;
 unsigned long lastRepeaterSeen = 0; // เวลาที่ได้รับข้อมูลล่าสุดผ่าน Repeater (ใช้ตรวจจับ Repeater ไฟดับ)
@@ -106,6 +105,8 @@ const char* message_topic = "message";
 const char* notification_control_topic = "notification_control";
 const char* notification_status_topic = "notification_status";
 const char* request_data_topic = "request_data";
+const char* master_status_topic = "master_status";           // LWT: "online"/"offline" สำหรับให้แอปเช็คว่า Master ยังออนไลน์อยู่จริงไหม
+const char* master_last_update_topic = "master_last_update";  // เวลาจริง (NTP) ที่ publish ชุดข้อมูลล่าสุด เอาไว้เทียบกับเวลาปัจจุบันในแอปเอง
 
 // Flag to track when new data is received
 volatile bool newDataReceived = false;
@@ -163,8 +164,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #define RELAY_PIN_3 5
 #define RELAY_PIN_4 4
 
-#define RESET_BUTTON_PIN 1  // ย้ายจาก 47 มาขา 1 เนื่องจากขา 47 เสีย
-#define LONG_PRESS_DURATION 2000  // กำหนดเวลาการกดค้าง (2 วินาที)
+#define RESET_BUTTON_PIN 1  // ย้ายจาก 47 มาขา 1 เนื่องจากขา 47 เสีย (ตอนนี้ใช้เพิ่มความสว่างจอชั่วคราวเท่านั้น reset notification ย้ายไปสั่งผ่าน MQTT อย่างเดียว)
+const uint8_t DISPLAY_BRIGHTNESS_IDLE = 6;     // ความสว่างขณะพัก ~10% (0-255)
+const uint8_t DISPLAY_BRIGHTNESS_ACTIVE = 255; // ความสว่างระหว่างแสดงข้อมูล ~100%
+const unsigned long DISPLAY_BOOST_DURATION_MS = 60000; // ระยะเวลาความสว่างสูงหลังกดปุ่ม (1 นาที)
+const unsigned long LED_HEARTBEAT_INTERVAL_MS = 20000; // กระพริบ LED ทุก 20 วินาทีเมื่อจอปิด
+const unsigned long LED_HEARTBEAT_ON_MS = 250;          // ระยะเวลาที่ LED ติดในแต่ละรอบ
 
 WiFiMulti wifiMulti;
 
@@ -192,25 +197,29 @@ SX126XLT LT;
 
 // การตั้งค่า Node ทั้งหมดในระบบ (เพิ่ม Node 8, 9, 10 ได้ที่นี่)
 Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
-    {1, "JD",       "JD",       50, RELAY_PIN_1, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {2, "PhraNon",  "PhraNon",  50, RELAY_PIN_2, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {6, "TaiFa",    "TaiFa",    10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {7, "KhonPD",   "KhonPD",   10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {8, "SuanMM",   "SuanMM",   10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0},
-    {20, "NongPog", "NongPog",  0,  0,           MSG_TYPE_SPD,   -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0}
-    // สามารถเพิ่ม Node ใหม่ได้ที่นี่ เช่น {9, "Tank9", "Tank9", 50, 0, MSG_TYPE_WATER, 0, 0, STATE_NORMAL, STATE_NORMAL, 0}
+    {1, "JD",       "JD",       50, RELAY_PIN_1, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {2, "PhraNon",  "PhraNon",  50, RELAY_PIN_2, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {6, "TaiFa",    "TaiFa",    10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {7, "KhonPD",   "KhonPD",   10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {8, "SuanMM",   "SuanMM",   10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {20, "NongPog", "NongPog",  0,  0,           MSG_TYPE_SPD,   -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0}
+    // สามารถเพิ่ม Node ใหม่ได้ที่นี่ เช่น {9, "Tank9", "Tank9", 50, 0, MSG_TYPE_WATER, 0, 0, STATE_NORMAL, STATE_NORMAL, 0, false}
 };
 
 const int numNodes = sizeof(nodes) / sizeof(nodes[0]);
 unsigned long nodeLowWaterStartTime[numNodes] = {0}; // จับเวลาสำหรับเงื่อนไขพิเศษของ TaiFa, KhonPD, SuanMM
-const int LOW_THRESHOLD = 5; // จำนวนครั้งที่ต้องอ่านค่าต่ำกว่า Threshold ติดกันเพื่อแจ้งเตือน
+const int LOW_THRESHOLD = 10; // จำนวนครั้งที่ต้องอ่านค่าต่ำกว่า Threshold ติดกันเพื่อแจ้งเตือน
+const uint8_t COMM_FAILURE_THRESHOLD = 3; // ต้องไม่ตอบติดต่อกันกี่รอบจึงแจ้งเตือน Comm Error
 
 volatile bool buttonPressed = false;     // สถานะว่าปุ่มถูกกดหรือไม่
-volatile unsigned long buttonPressTime = 0;  // เวลาที่ปุ่มถูกกด
-bool resetTriggered = false;            // ตรวจสอบการทำงานของรีเซ็ต
+volatile bool displaySessionActive = false;    // สถานะว่ากำลังแสดงข้อมูลบนจออยู่หรือไม่
+volatile unsigned long displaySessionStartTime = 0; // เวลาเริ่ม session แสดงข้อมูลล่าสุด
+unsigned long lastLedHeartbeatTime = 0;
+unsigned long ledHeartbeatStartTime = 0;
+bool ledHeartbeatOn = false;
 
 // ฟังก์ชันเช็คว่าออกเน็ตได้จริงหรือไม่ โดยการลอง Connect ไปที่ Google DNS (8.8.8.8)
 bool checkInternetConnection() {
@@ -224,8 +233,22 @@ bool checkInternetConnection() {
     return false;
 }
 
-// ==== ฟังก์ชันส่งข้อความไปที่ LINE ====
-void sendLineMessage(String message) {
+// คืนค่า วันที่-เวลาปัจจุบันตาม NTP เพื่อให้แอปมือถือเทียบกับเวลาปัจจุบันได้เอง (คืนสตริงว่างถ้ายังไม่ sync)
+String getFormattedTime() {
+    time_t now;
+    time(&now);
+    if (now < 1700000000) { // ยังไม่ sync NTP (epoch เริ่มต้นจะเป็นค่าเล็กมาก)
+        return "";
+    }
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char buf[25];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    return String(buf);
+}
+
+// ==== ฟังก์ชันส่งข้อความไปที่ LINE (ใช้ภายในเท่านั้น ระบุปลายทางได้ทั้ง user/admin) ====
+void sendLineMessageTo(const char* userId, String message) {
     if (!notificationsEnabled) {
         Serial.println("Notifications disabled. Skipping LINE message.");
         return;
@@ -245,7 +268,7 @@ void sendLineMessage(String message) {
     }
 
     String payload = "{";
-    payload += "\"to\": \"" + String(LINE_USER_ID) + "\",";
+    payload += "\"to\": \"" + String(userId) + "\",";
     payload += "\"messages\": [{";
     payload += "\"type\": \"text\",";
     payload += "\"text\": \"" + message + "\"";
@@ -284,6 +307,16 @@ void sendLineMessage(String message) {
     }
 
     lineClient.stop();
+}
+
+// แจ้งเตือนผู้ใช้งานทั่วไป: ระดับน้ำ, สถานะ SPD ฯลฯ
+void sendLineMessage(String message) {
+    sendLineMessageTo(LINE_USER_ID, message);
+}
+
+// แจ้งเตือน Admin: สถานะการทำงานของระบบ (Comm Error, Repeater, แบตเตอรี่)
+void sendAdminMessage(String message) {
+    sendLineMessageTo(LINE_ADMIN_USER_ID, message);
 }
 
 // ส่งข้อความเข้าคิวให้ MainTask เป็นผู้ publish ขึ้น MQTT แต่เพียงผู้เดียว (ปลอดภัยเมื่อเรียกจากหลาย Task)
@@ -341,13 +374,20 @@ void processReceivedPacket(const LoRaPacket &packet) {
             nodes[i].lastValue = (int)packet.value;
             nodes[i].lastSeen = millis();
             nodes[i].battery = packet.battery; // บันทึกค่าแบตเตอรี่ที่ได้รับ
+            nodes[i].commFailureCount = 0;
 
-            // แจ้งเตือนแบตเตอรี่ต่ำ (เฉพาะ ThamYai ID:4 และ RongPui ID:5)
-            if ((nodes[i].id == 4 || nodes[i].id == 5) && 
-                nodes[i].battery > 0 && 
-                nodes[i].battery < BATTERY_LOW_THRESHOLD && 
-                nodes[i].alertState == STATE_NORMAL) {
-                sendLineMessage("แจ้งเตือน: DataNode " + nodes[i].name + " แบตเตอรี่ต่ำ (" + String(nodes[i].battery, 2) + "V)");
+            // แจ้งเตือนแบตเตอรี่ต่ำ (เฉพาะ ThamYai ID:4 และ RongPui ID:5) - ส่งครั้งเดียวจนกว่าแบตจะกลับมาปกติ
+            if ((nodes[i].id == 4 || nodes[i].id == 5) &&
+                nodes[i].battery > 0 &&
+                nodes[i].battery < BATTERY_LOW_THRESHOLD &&
+                !nodes[i].batteryAlertSent) {
+                sendAdminMessage("แจ้งเตือน: DataNode " + nodes[i].name + " แบตเตอรี่ต่ำ (" + String(nodes[i].battery, 2) + "V)");
+                nodes[i].batteryAlertSent = true;
+            } else if ((nodes[i].id == 4 || nodes[i].id == 5) &&
+                       nodes[i].battery >= BATTERY_RECOVER_THRESHOLD &&
+                       nodes[i].batteryAlertSent) {
+                sendAdminMessage("แจ้งเตือน: DataNode " + nodes[i].name + " แบตเตอรี่กลับมาปกติ (" + String(nodes[i].battery, 2) + "V)");
+                nodes[i].batteryAlertSent = false;
             }
 
             // กรณีกลับมาทำงานปกติหลังจาก Comm Error
@@ -384,7 +424,13 @@ void processReceivedPacket(const LoRaPacket &packet) {
                     }
                 } else {
                     nodes[i].lowCount = 0;
-                    if (nodes[i].alertState == STATE_LOW_WATER) nodes[i].alertState = STATE_NORMAL;
+                    if (nodes[i].alertState == STATE_LOW_WATER) {
+                        nodes[i].alertState = STATE_NORMAL;
+                        if (nodes[i].relayPin != 0) {
+                            digitalWrite(nodes[i].relayPin, HIGH);
+                            Serial.println("DEBUG: [RELAY OFF] " + nodes[i].name + " water level recovered.");
+                        }
+                    }
                 }
             } 
             // Logic สำหรับ SPD
@@ -428,15 +474,27 @@ bool pollSingleNode(int nodeIdx) {
     }
 
     // รอรับคำตอบกลับจาก Repeater (Downlink -> Node -> Uplink -> Master)
+    // หมายเหตุสำคัญ: receiveSXBuffer(..., NO_WAIT) จะ return 0 ทันทีเสมอโดยไม่ตรวจสอบแพ็กเก็ตเลย (ดู SX126XLT.cpp)
+    // จึงต้องใช้ WAIT_RX พร้อม timeout จริงเป็นช่วงๆ (slice) แทน เพื่อให้ยังเช็ค mqttRequestData เพื่อยกเลิกได้ระหว่างรอ
+    // slice ต้องยาวกว่า time-on-air ของแพ็กเก็ต (~1.2-1.5s ที่ SF12/BW125) ไม่งั้นการ re-arm ระหว่าง slice
+    // จะไปตัดกลางคันขณะกำลังรับแพ็กเก็ตที่ยาวกว่า slice พอดี ทำให้พลาดคำตอบทุกครั้ง
+    const uint32_t POLL_RX_SLICE_MS = 3000;
     unsigned long startTime = millis();
     while (millis() - startTime < POLL_TIMEOUT_MS) {
         if (mqttRequestData) {
             Serial.println("DEBUG: Poll wait aborted - a new manual poll request is pending.");
             return false;
         }
-        int packetSize = LT.receiveSXBuffer(0, 0, NO_WAIT);
+
+        unsigned long elapsed = millis() - startTime;
+        uint32_t remaining = POLL_TIMEOUT_MS - elapsed;
+        uint32_t rxSlice = (remaining < POLL_RX_SLICE_MS) ? remaining : POLL_RX_SLICE_MS;
+
+        int packetSize = LT.receiveSXBuffer(0, rxSlice, WAIT_RX); // บล็อกจริงจนกว่าจะได้แพ็กเก็ตหรือครบ rxSlice
         if (packetSize > 0) {
             if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+                int16_t rssi = LT.readPacketRSSI();
+                int8_t snr = LT.readPacketSNR();
                 LoRaPacket rxPacket;
                 uint8_t rxBuffer[sizeof(LoRaPacket)];
 
@@ -452,16 +510,30 @@ bool pollSingleNode(int nodeIdx) {
 
                 memcpy(&rxPacket, rxBuffer, sizeof(LoRaPacket));
 
+                // Log สัญญาณทุกแพ็กเก็ตที่ถอดรหัสได้ เพื่อเปรียบเทียบความแรงสัญญาณ Master<->Repeater ก่อน/หลังปรับเสาอากาศ
+                Serial.printf("Master RX: Type=%d, Sender=%d, Recv=%d, Source=%d, RSSI=%d dBm, SNR=%d dB\n",
+                              rxPacket.messageType, rxPacket.senderID, rxPacket.receiverID, rxPacket.sourceNodeID, rssi, snr);
+
+                if (rxPacket.messageType == MSG_TYPE_LINK_QUALITY &&
+                    rxPacket.receiverID == 100 && rxPacket.senderID == 101 &&
+                    rxPacket.sourceNodeID == targetID) {
+                    int16_t nodeToRepeaterRssi = (int16_t)rxPacket.battery;
+                    int8_t nodeToRepeaterSnr = (int8_t)rxPacket.value - 128;
+                    Serial.printf("Node %d -> Repeater link: RSSI=%d dBm, SNR=%d dB\n",
+                                  targetID, nodeToRepeaterRssi, nodeToRepeaterSnr);
+                    continue;
+                }
+
                 // ตรวจสอบว่าเป็นคำตอบที่ส่งถึง Master (100) จาก Repeater (101) สำหรับ Node ที่กำลัง Poll อยู่
                 if (rxPacket.receiverID == 100 && rxPacket.senderID == 101 && rxPacket.sourceNodeID == targetID) {
                     processReceivedPacket(rxPacket);
                     return true;
                 }
+                // ไม่ตรงเงื่อนไข: วนลูปต่อเพื่อรอในเวลาที่เหลือ
             } else {
                 LT.endReadSXBuffer();
             }
         }
-        delay(20);
     }
 
     return false; // หมดเวลารอ
@@ -491,9 +563,16 @@ bool pollNodeWithRetries(int nodeIdx) {
     // หากลองครบตามจำนวนแล้วยังไม่ตอบ
     Serial.printf("-> CRITICAL: Node %s (ID %d) FAILED to respond after %d attempts!\n", nodes[nodeIdx].name.c_str(), nodes[nodeIdx].id, maxAttempts);
     
-    if (nodes[nodeIdx].commState == STATE_NORMAL) {
+    if (nodes[nodeIdx].commFailureCount < COMM_FAILURE_THRESHOLD) {
+        nodes[nodeIdx].commFailureCount++;
+    }
+    Serial.printf("-> Node %s communication failure count: %d/%d\n",
+                  nodes[nodeIdx].name.c_str(), nodes[nodeIdx].commFailureCount, COMM_FAILURE_THRESHOLD);
+
+    if (nodes[nodeIdx].commFailureCount >= COMM_FAILURE_THRESHOLD &&
+        nodes[nodeIdx].commState == STATE_NORMAL) {
         nodes[nodeIdx].commState = STATE_COMM_ERROR;
-        sendLineMessage("แจ้งเตือน: การสื่อสารขัดข้องที่ DataNode " + nodes[nodeIdx].name + " (ไม่ตอบกลับคำขอ)");
+        sendAdminMessage("แจ้งเตือน: การสื่อสารขัดข้องที่ DataNode " + nodes[nodeIdx].name + " (ไม่ตอบกลับคำขอ)");
         pendingMQTTDataSync = true;
     }
 
@@ -531,8 +610,13 @@ void pollAllNodes() {
 
     // ตรวจสอบว่า Repeater มีปัญหาหรือไม่ (ถ้าไม่ได้รับข้อมูลจากโหนดใดๆ เลย)
     if (successCount == 0 && numNodes > 0) {
-        if (!repeaterErrorActive) {
-            sendLineMessage("แจ้งเตือน: พบความผิดปกติที่ Repeater (ไม่สามารถติดต่อ Data Nodes ผ่าน Repeater ได้)");
+        if (repeaterFailureCount < COMM_FAILURE_THRESHOLD) {
+            repeaterFailureCount++;
+        }
+        Serial.printf("-> Repeater communication failure count: %d/%d\n",
+                      repeaterFailureCount, COMM_FAILURE_THRESHOLD);
+        if (repeaterFailureCount >= COMM_FAILURE_THRESHOLD && !repeaterErrorActive) {
+            sendAdminMessage("แจ้งเตือน: พบความผิดปกติที่ Repeater (ไม่สามารถติดต่อ Data Nodes ผ่าน Repeater ได้)");
             repeaterErrorActive = true;
             for (int i = 0; i < numNodes; i++) {
                 nodes[i].commState = STATE_COMM_ERROR;
@@ -540,8 +624,9 @@ void pollAllNodes() {
             pendingMQTTDataSync = true;
         }
     } else {
+        repeaterFailureCount = 0;
         if (repeaterErrorActive) {
-            sendLineMessage("แจ้งเตือน: ระบบการสื่อสาร (Repeater) กลับมาทำงานปกติแล้ว");
+            sendAdminMessage("แจ้งเตือน: ระบบการสื่อสาร (Repeater) กลับมาทำงานปกติแล้ว");
             repeaterErrorActive = false;
             lastRepeaterRecoveryTime = millis();
         }
@@ -552,13 +637,13 @@ void pollAllNodes() {
 // ฟังก์ชันจัดการเมื่อ Node กลับมาออนไลน์ เพื่อให้โค้ดหลักสะอาดขึ้น
 void handleNodeRecovery(int nodeIdx) {
     if (repeaterErrorActive) {
-        sendLineMessage("แจ้งเตือน: ระบบการสื่อสาร (Repeater) กลับมาทำงานปกติแล้ว");
+        sendAdminMessage("แจ้งเตือน: ระบบการสื่อสาร (Repeater) กลับมาทำงานปกติแล้ว");
         repeaterErrorActive = false;
         lastRepeaterRecoveryTime = millis();
     } else {
         unsigned long timeSinceLastRecovery = millis() - lastRepeaterRecoveryTime;
         if (timeSinceLastRecovery > RECOVERY_GRACE_PERIOD) {
-            sendLineMessage("แจ้งเตือน: DataNode " + nodes[nodeIdx].name + " กลับมาทำงานปกติแล้ว");
+            sendAdminMessage("แจ้งเตือน: DataNode " + nodes[nodeIdx].name + " กลับมาทำงานปกติแล้ว");
         } else {
             Serial.println("DEBUG: Silent recovery for " + nodes[nodeIdx].name + " during grace period.");
         }
@@ -614,7 +699,7 @@ void resetNotification() {
         nodeLowWaterStartTime[i] = 0;
     }
     repeaterErrorActive = false;
-    suspectedCommTime = 0;         // ล้างเวลาที่กำลังรอสังเกตการณ์ทิ้งด้วย
+    repeaterFailureCount = 0;
     lastRepeaterRecoveryTime = 0;  // ล้างช่วงเวลาพักการแจ้งเตือน (Grace Period) เพื่อให้พร้อมรับข้อมูลใหม่ทันที
     lastRepeaterSeen = millis();   // ป้องกันการตรวจจับ Repeater ลงทันทีหลังรีเซ็ต
 
@@ -626,14 +711,7 @@ void resetNotification() {
     Serial.println("Notifications and relays reset.");
 
     display.clear();
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 10, "NOTIFICATION");
-    display.drawString(64, 40, "RESET");
     display.display();
-
-    // หน่วงเวลาเพื่อให้ข้อความแสดงผลค้างไว้
-    vTaskDelay(5000 / portTICK_PERIOD_MS); // ใช้ vTaskDelay เพื่อให้ Task อื่นยังทำงานได้บ้าง
 }
 
 void VextON(void) {
@@ -656,88 +734,32 @@ void displayData(String tankName, String message) {
     display.display();
 }
 
-void CheckCommError() {
-    unsigned long currentMillis = millis();
-    bool anyFailing = false;
-    bool stateChanged = false; // ตัวแปรเช็คว่ามีการเปลี่ยนแปลงสถานะเพื่ออัปเดต MQTT หรือไม่
-
-    // 1. ตรวจสอบว่ามี Node ที่ขาดการติดต่อนานเกินกำหนดหรือไม่ (เฉพาะเมื่อ Repeater ยังปกติดีอยู่)
-    for (int i = 0; i < numNodes; i++) {
-        if (currentMillis - nodes[i].lastSeen >= commTimeout && nodes[i].commState == STATE_NORMAL) {
-            anyFailing = true;
-        }
-    }
-
-    // 2. หากเริ่มพบปัญหาและยังไม่มีการแจ้งเตือน Repeater ให้เริ่มจับเวลาสังเกตการณ์
-    if (anyFailing && !repeaterErrorActive) {
-        if (suspectedCommTime == 0) {
-            suspectedCommTime = currentMillis;
-            Serial.println("DEBUG: Found failing node(s). Starting 5-min observation...");
-        }
-    } else {
-        suspectedCommTime = 0; // รีเซ็ตหากทุก Node กลับมาปกติก่อนครบเวลา
-    }
-
-    // 3. เมื่อครบกำหนดการสังเกตการณ์ ให้ตัดสินใจว่าจะแจ้งเตือนแบบไหน
-    if (suspectedCommTime != 0 && (currentMillis - suspectedCommTime >= OBSERVATION_WINDOW)) {
-        // ตรวจจับ Repeater ขัดข้องโดยอิงจากเวลาที่ไม่ได้รับข้อมูลผ่าน Repeater
-        bool isRepeaterDown = false;
-        if (lastRepeaterSeen != 0) {
-            unsigned long sinceRepeater = currentMillis - lastRepeaterSeen;
-            Serial.printf("DEBUG: Time since last repeater packet: %lu ms\n", sinceRepeater);
-            if (sinceRepeater >= REPEATER_TIMEOUT) {
-                isRepeaterDown = true;
-            }
-        }
-
-        if (isRepeaterDown && !repeaterErrorActive) {
-            sendLineMessage("แจ้งเตือน: พบความผิดปกติที่ Repeater (อาจเกิดจากไฟดับหรืออุปกรณ์ขัดข้อง)");
-            repeaterErrorActive = true;
-            
-            // เมื่อ Repeater เสีย ให้ปรับทุก Node เป็นสถานะ Error ทันทีแบบ "เงียบ" (ไม่ส่ง Line รายตัว)
-            for (int i = 0; i < numNodes; i++) {
-                if (nodes[i].commState == STATE_NORMAL) {
-                    nodes[i].commState = STATE_COMM_ERROR;
-                    stateChanged = true;
-                }
-            }
-        }
-
-        for (int i = 0; i < numNodes; i++) {
-            if (currentMillis - nodes[i].lastSeen >= commTimeout && nodes[i].commState == STATE_NORMAL) {
-                // แจ้งรายโหนดเฉพาะกรณีที่ Node เสียเองจริงๆ โดยที่ Repeater ยังทำงานปกติ
-                if (!isRepeaterDown) { 
-                    sendLineMessage("แจ้งเตือน: การสื่อสารขัดข้องที่ DataNode " + nodes[i].name);
-                }
-                // ต้องเปลี่ยนสถานะเป็น ERROR เสมอ เพื่อให้ระบบรับทราบว่าโหนดนี้ขาดการติดต่อแล้ว
-                nodes[i].commState = STATE_COMM_ERROR;
-                stateChanged = true;
-            }
-        }
-
-        // หากมีการเปลี่ยนแปลงสถานะ ให้ส่งข้อมูลขึ้น MQTT เพียงรอบเดียว
-        if (stateChanged) {
-            pendingMQTTDataSync = true;
-        }
-        suspectedCommTime = 0;
-    }
-}
-
+// หมายเหตุ: เดิมมี CheckCommError() ที่ตรวจจับ comm error/repeater down แบบ timeout ยาว (50 นาที)
+// สำหรับสถาปัตยกรรม push-based เดิม ตอนนี้ pollNodeWithRetries()/pollAllNodes()/handleNodeRecovery()
+// ตรวจจับและแจ้งเตือนได้เร็วและแม่นยำกว่าอยู่แล้วในทุกรอบ poll จึงลบออกเพื่อไม่ให้ตรรกะทับซ้อน/ขัดแย้งกัน
 
 void DisplayTimerTask(void *pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     for (;;) {
+        if (!displaySessionActive) {
+            display.clear();
+            display.display();
+            xLastWakeTime = xTaskGetTickCount();
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            continue;
+        }
+
         int currentTotalDisplayItems = numNodes;
         if (!internetConnected) {
             currentTotalDisplayItems++; // เพิ่ม 1 ช่องสำหรับ "Internet Error"
         }
 
         // สลับแสดงผล: ข้อมูล Node -> หน้าว่าง (Flash) หรือ Internet Error -> หน้าว่าง
-        if (displayState % 2 == 0) {
-            if (activeNodeIdx < numNodes) {
+        if (displayPageState % 2 == 0) {
+            if (displayNodeIndex < numNodes) {
                 // แสดงข้อมูล Node ปัจจุบัน
-                Node &n = nodes[activeNodeIdx];
+                Node &n = nodes[displayNodeIndex];
                 if (n.commState == STATE_COMM_ERROR) {
                     displayData(n.name, "CommError");
                 } else if (n.lastValue == -1) {
@@ -747,11 +769,11 @@ void DisplayTimerTask(void *pvParameters) {
                 } else {
                     displayData(n.name, String(n.lastValue) + " %");
                 }
-            } else if (activeNodeIdx == numNodes && !internetConnected) {
-                // แสดง Internet Error หาก activeNodeIdx ชี้ไปที่ช่องสุดท้ายและไม่มีเน็ต
+            } else if (displayNodeIndex == numNodes && !internetConnected) {
+                // แสดง Internet Error หาก displayNodeIndex ชี้ไปที่ช่องสุดท้ายและไม่มีเน็ต
                 displayData("Internet", "Error");
             } else {
-                // กรณี activeNodeIdx ชี้ไปที่ช่อง Internet Error แต่เน็ตต่ออยู่ ให้แสดงหน้าว่างแทน
+                // กรณี displayNodeIndex ชี้ไปที่ช่อง Internet Error แต่เน็ตต่ออยู่ ให้แสดงหน้าว่างแทน
                 display.clear();
                 display.display();
             }
@@ -760,11 +782,11 @@ void DisplayTimerTask(void *pvParameters) {
             display.clear();
             display.display();
             // ขยับไป Node ถัดไปหลังจากหน้าว่าง
-            activeNodeIdx = (activeNodeIdx + 1) % currentTotalDisplayItems;
+            displayNodeIndex = (displayNodeIndex + 1) % currentTotalDisplayItems;
         }
 
-        TickType_t delayTime = (displayState % 2 == 0) ? displayInterval : pauseInterval;
-        displayState = (displayState + 1) % (currentTotalDisplayItems * 2); // วนรอบตามจำนวนรายการทั้งหมด (ข้อมูล + หน้าว่าง)
+        TickType_t delayTime = (displayPageState % 2 == 0) ? displayInterval : pauseInterval;
+        displayPageState = (displayPageState + 1) % (currentTotalDisplayItems * 2); // วนรอบตามจำนวนรายการทั้งหมด (ข้อมูล + หน้าว่าง)
 
         // delay แบบ vTaskDelayUntil เพื่อให้เวลา delay คงที่แม่นยำ
         vTaskDelayUntil(&xLastWakeTime, delayTime);
@@ -778,12 +800,14 @@ void reconnect() {
         String clientId = "ESP32Client-";
         clientId += String(WiFi.macAddress()); // Use MAC Address for stable Client ID
         
-        if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
+        // (TAG) ตั้งค่า LWT ไว้ด้วย: ถ้า Master หลุดการเชื่อมต่อแบบไม่บอกลา (ไฟดับ/แฮงก์จน TCP ขาด) broker จะประกาศ offline ให้เอง
+        if (client.connect(clientId.c_str(), mqtt_username, mqtt_password, master_status_topic, 1, true, "offline")) {
             Serial.println("connected");
             client.subscribe("reset_notification");
             client.subscribe("reset_system");
             client.subscribe(notification_control_topic);
             client.subscribe(request_data_topic);
+            publishMessage(master_status_topic, "online", true);
         } else {
             Serial.print("failed, rc=");
             Serial.print(client.state());
@@ -841,6 +865,10 @@ void publishMessage(const char* topic, String payload , boolean retained) {
 void sendMQTTData() {
     publishMessage(notification_status_topic, notificationsEnabled ? "1" : "0", true);
 
+    // ส่งเวลาปัจจุบันจริง (NTP) แนบมากับทุกชุดข้อมูลที่ publish จริง เพื่อให้แอปมือถือเทียบกับเวลาปัจจุบันเองได้
+    String ts = getFormattedTime();
+    if (ts.length() > 0) publishMessage(master_last_update_topic, ts, true);
+
     // วน Loop ส่งข้อมูลของทุก Node ขึ้น MQTT ตาม topic ที่กำหนดใน Struct
     for (int i = 0; i < numNodes; i++) {
         if (nodes[i].commState == STATE_COMM_ERROR) {
@@ -882,7 +910,7 @@ void setup() {
     // Initialize OLED Display
     display.init();
     display.clear();
-    display.setContrast(150);
+    display.setBrightness(DISPLAY_BRIGHTNESS_IDLE); // เริ่มต้นที่ความสว่าง ~10%
     display.display();   
     
     pinMode(RELAY_PIN_1, OUTPUT);
@@ -899,18 +927,12 @@ void setup() {
     digitalWrite(RELAY_PIN_4, HIGH);
 
     // เริ่ม Task ปุ่มกดก่อนเพื่อให้กดค้างรีเซ็ตได้ทันทีหากจำเป็น
-    xTaskCreate(ButtonTask, "ButtonTask", 2048, NULL, 1, &TaskButton);
+    xTaskCreate(DisplayControlButtonTask, "DisplayControlButtonTask", 2048, NULL, 1, &TaskButton);
 
-    // 1. เคลียร์ค่าและแสดงหน้าจอ RESET ให้จบกระบวนการ (5 วินาที)
+    // 1. เคลียร์สถานะแจ้งเตือนและ Relay โดยไม่แสดงผลบนหน้าจอ
     resetNotification();
 
-    // แสดงหน้าจอ Waiting สำหรับแต่ละโหนดเมื่อเปิดเครื่อง เพื่อให้ทราบสถานะเริ่มต้น
-    for (int i = 0; i < numNodes; i++) {
-        displayData(nodes[i].name, "Waiting...");
-        delay(1000);
-    }
-
-    // 2. หลังจาก Reset จบแล้ว ค่อยเริ่ม Task วนแสดงผลระดับน้ำ เพื่อไม่ให้หน้าจอซ้อนกัน
+    // 2. เริ่ม Task แสดงข้อมูลเมื่อผู้ใช้กดปุ่มเท่านั้น
     xTaskCreate(DisplayTimerTask, "DisplayTimerTask", 5000, NULL, 1, &TaskDisplay);
 
     // เชื่อมต่อ Wi-Fi
@@ -920,7 +942,8 @@ void setup() {
     espClient.setCACert(root_ca);
     client.setServer(mqtt_server, mqtt_port);
     client.setCallback(callback);
-    
+    client.setKeepAlive(60); // เพิ่มจาก default 15s เพื่อลด PINGREQ/PINGRESP ที่กินโควต้าเน็ตรายปีโดยไม่จำเป็น
+
     internetConnected = false; // เริ่มต้นเป็น false จนกว่าจะเช็คผ่าน
 
     if (!initLoRa()) {
@@ -947,38 +970,52 @@ void setup() {
 }
 
 // Task for Button Logic (Separated for responsiveness)
-void ButtonTask(void *parameter) {
+// หน้าที่เดียวตอนนี้: เพิ่มความสว่างจอชั่วคราวเป็น 1 นาทีเมื่อกด (reset notification ย้ายไปสั่งผ่าน MQTT เท่านั้น)
+void DisplayControlButtonTask(void *parameter) {
     for (;;) {
         bool isPressed = (digitalRead(RESET_BUTTON_PIN) == LOW); // ทำงานร่วมกับ RC Filter 2k/4.7uF
-
-        // ให้ไฟขาว (Pin 35) ติดเวลากดปุ่ม และดับเมื่อปล่อย
-        digitalWrite(35, isPressed ? HIGH : LOW);
 
         if (isPressed) {
             if (!buttonPressed) {
                 vTaskDelay(50 / portTICK_PERIOD_MS); // Software Debounce ซ้ำอีกชั้น
                 if (digitalRead(RESET_BUTTON_PIN) == LOW) {
                     buttonPressed = true;
-                    buttonPressTime = millis();
-                    Serial.println("DEBUG: Button Pressed (Pin 1 - Protected)");
-                }
-            } else {
-                // ตรวจสอบว่ากดค้างนานพอหรือยัง
-                if (!resetTriggered && (millis() - buttonPressTime >= LONG_PRESS_DURATION)) {
-                    Serial.println("DEBUG: Long press confirmed! Executing reset...");
-                    vTaskSuspend(TaskDisplay);      
-                    resetNotification();            
-                    vTaskResume(TaskDisplay);       
-                    resetTriggered = true;          
+                    Serial.println("DEBUG: Button Pressed - Showing display at full brightness for 1 minute");
+                    display.setBrightness(DISPLAY_BRIGHTNESS_ACTIVE);
+                    displaySessionActive = true;
+                    displaySessionStartTime = millis();
+                    displayPageState = 0;
+                    displayNodeIndex = 0;
+                    digitalWrite(35, LOW);
+                    ledHeartbeatOn = false;
                 }
             }
         } else {
-            if (buttonPressed) {
-                Serial.println("DEBUG: Button Released");
-            }
             buttonPressed = false;
-            resetTriggered = false;
         }
+
+        // หมดเวลาความสว่างสูงแล้ว ให้ปิดจอและกลับเข้าสู่ heartbeat mode
+        if (displaySessionActive && (millis() - displaySessionStartTime >= DISPLAY_BOOST_DURATION_MS)) {
+            display.setBrightness(DISPLAY_BRIGHTNESS_IDLE);
+            displaySessionActive = false;
+            display.clear();
+            display.display();
+            lastLedHeartbeatTime = millis();
+            Serial.println("DEBUG: Display window ended; OLED off");
+        }
+
+        if (!displaySessionActive) {
+            if (!ledHeartbeatOn && millis() - lastLedHeartbeatTime >= LED_HEARTBEAT_INTERVAL_MS) {
+                digitalWrite(35, HIGH);
+                ledHeartbeatOn = true;
+                ledHeartbeatStartTime = millis();
+                lastLedHeartbeatTime = millis();
+            } else if (ledHeartbeatOn && millis() - ledHeartbeatStartTime >= LED_HEARTBEAT_ON_MS) {
+                digitalWrite(35, LOW);
+                ledHeartbeatOn = false;
+            }
+        }
+
         vTaskDelay(50 / portTICK_PERIOD_MS); 
     }
 }
@@ -991,8 +1028,6 @@ void MainTask(void *parameter) {
   static bool ntpSynced = false;
   
   while (true) {
-    CheckCommError();
-
     // จัดการ NTP เมื่อเชื่อมต่อได้ครั้งแรก
     if (WiFi.status() == WL_CONNECTED && !ntpSynced) {
         configTime(7 * 3600, 0, "pool.ntp.org", "time.google.com");

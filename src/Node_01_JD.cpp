@@ -30,7 +30,7 @@ const uint8_t SpreadingFactor = LORA_SF12;      // LoRa spreading factor
 const uint8_t CodeRate = LORA_CR_4_5;           // LoRa coding rate
 const uint8_t Optimisation = LDRO_AUTO;         // Low data rate optimisation setting
 
-const int8_t TXpower = 2;                      // LoRa transmit power in dBm
+const int8_t TXpower = 14;                      // LoRa transmit power in dBm
 
 #define MESSAGE_TYPE 1
 #define REPEATER_NODE 101
@@ -342,8 +342,23 @@ void loop() {
 
     // ฟังคำขอ Poll Request จาก Master ผ่าน Repeater
     int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
+
+    if (packetSize <= 0) {
+        // ไม่ได้แพ็กเก็ต: พิมพ์เหตุผล (Timeout / CRC error / Header error) เพื่อ debug
+        uint16_t irq = LT.readIrqStatus();
+        Serial.printf("Node1 RX fail, IRQ status: 0x%04X", irq);
+        if (irq & IRQ_CRC_ERROR) Serial.print(" [CRC_ERROR]");
+        if (irq & IRQ_HEADER_ERROR) Serial.print(" [HEADER_ERROR]");
+        if (irq & IRQ_RX_TX_TIMEOUT) Serial.print(" [TIMEOUT]");
+        Serial.println();
+    }
+
     if (packetSize > 0) {
         if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+            int16_t rssi = LT.readPacketRSSI();
+            int8_t snr = LT.readPacketSNR();
+            Serial.printf("Node1 received packet (size OK), RSSI=%d dBm, SNR=%d dB\n", rssi, snr);
+
             LoRaPacket packet;
             uint8_t rxBuffer[sizeof(LoRaPacket)];
 
@@ -359,14 +374,23 @@ void loop() {
 
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
+            Serial.printf("Node1 RX: Type=%d, Recv=%d, Source=%d (expecting NODE_ID=1)\n",
+                          packet.messageType, packet.receiverID, packet.sourceNodeID);
+
             // หากเป็นคำขอ POLL_REQ ที่ส่งมาถึง Node 1
-            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == 1 || packet.sourceNodeID == 1)) {
+            // เช็คเฉพาะ receiverID เพราะ field นี้ถูก Repeater เขียนใหม่ตอน forward เท่านั้น
+            // (ถ้าเช็ค sourceNodeID ด้วย จะทำให้ Node ตอบสนองแพ็กเก็ตต้นฉบับที่ Master ส่งถึง Repeater ก่อนเวลา หากอยู่ในระยะที่ได้ยินโดยตรง)
+            if (packet.messageType == MSG_TYPE_POLL_REQ && packet.receiverID == 1) {
                 Serial.println("Received POLL_REQ for Node 1. Measuring...");
                 uint8_t pct = measureAndCalculatePercentage();
                 delay(50); // หน่วงเวลาสั้นๆ ก่อนส่งตอบกลับ
-                sendData(MESSAGE_TYPE, REPEATER_NODE, 1, pct);
+                uint8_t txResult = sendData(MESSAGE_TYPE, REPEATER_NODE, 1, pct);
+                Serial.printf("Node1 sendData result: %d (0 = failed)\n", txResult);
+            } else {
+                Serial.println("Node1: packet not addressed to this node, ignoring.");
             }
         } else {
+            Serial.printf("Node1 received packet with unexpected size: %d\n", packetSize);
             LT.endReadSXBuffer();
         }
     }

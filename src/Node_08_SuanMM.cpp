@@ -293,8 +293,23 @@ void loop() {
 
     // Listen for Master poll requests
     int packetSize = LT.receiveSXBuffer(0, 0, WAIT_RX);
+
+    if (packetSize <= 0) {
+        // ไม่ได้แพ็กเก็ต: พิมพ์เหตุผล (Timeout / CRC error / Header error) เพื่อ debug
+        uint16_t irq = LT.readIrqStatus();
+        Serial.printf("Node8 RX fail, IRQ status: 0x%04X", irq);
+        if (irq & IRQ_CRC_ERROR) Serial.print(" [CRC_ERROR]");
+        if (irq & IRQ_HEADER_ERROR) Serial.print(" [HEADER_ERROR]");
+        if (irq & IRQ_RX_TX_TIMEOUT) Serial.print(" [TIMEOUT]");
+        Serial.println();
+    }
+
     if (packetSize > 0) {
         if (packetSize == sizeof(LoRaPacket) || packetSize == (sizeof(LoRaPacket) + 2)) {
+            int16_t rssi = LT.readPacketRSSI();
+            int8_t snr = LT.readPacketSNR();
+            Serial.printf("Node8 received packet (size OK), RSSI=%d dBm, SNR=%d dB\n", rssi, snr);
+
             LoRaPacket packet;
             uint8_t rxBuffer[sizeof(LoRaPacket)];
 
@@ -310,13 +325,21 @@ void loop() {
 
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == NODE_ID || packet.sourceNodeID == NODE_ID)) {
+            Serial.printf("Node8 RX: Type=%d, Recv=%d, Source=%d (expecting NODE_ID=%d)\n",
+                          packet.messageType, packet.receiverID, packet.sourceNodeID, NODE_ID);
+
+            // เช็คเฉพาะ receiverID เพราะ field นี้ถูก Repeater เขียนใหม่ตอน forward เท่านั้น
+            if (packet.messageType == MSG_TYPE_POLL_REQ && packet.receiverID == NODE_ID) {
                 Serial.println("Received POLL_REQ for Node 8 (SuanMM). Measuring...");
                 uint8_t pct = measureAndCalculatePercentage();
                 delay(50);
-                sendData(MESSAGE_TYPE, REPEATER_NODE, NODE_ID, pct);
+                uint8_t txResult = sendData(MESSAGE_TYPE, REPEATER_NODE, NODE_ID, pct);
+                Serial.printf("Node8 sendData result: %d (0 = failed)\n", txResult);
+            } else {
+                Serial.println("Node8: packet not addressed to this node, ignoring.");
             }
         } else {
+            Serial.printf("Node8 received packet with unexpected size: %d\n", packetSize);
             LT.endReadSXBuffer();
         }
     }

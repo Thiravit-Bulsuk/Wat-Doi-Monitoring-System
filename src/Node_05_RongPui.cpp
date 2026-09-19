@@ -273,9 +273,9 @@ uint8_t measureAndCalculatePercentage() {
             Serial.println("Previously marked empty — keep sending 0%.");
             percentage = 0;
         } else if (!hasSentInitialZero && lastValidDistance == TANK_FULL_CM) {
-            Serial.println("No history and first read error. Sending initial 0%.");
-            isTankEmpty = true;
-            percentage = 0;
+            // อ่านครั้งแรกไม่ได้และยังไม่มีประวัติ มักเกิดจาก Blind Spot ตอนน้ำเต็ม (sensor อยู่ใกล้น้ำเกินไป) เหมือน PhraNon
+            Serial.println("No history and first read error (likely blind spot - tank full). Sending initial 100%.");
+            percentage = 100;
             hasSentInitialZero = true;
         } else if (lastValidDistance > (SENSOR_LIMIT_CM - 30)) { 
             Serial.println("Water below sensor range (> 4.5m). Reporting 0%.");
@@ -404,7 +404,8 @@ void loop() {
 
             memcpy(&packet, rxBuffer, sizeof(LoRaPacket));
 
-            if (packet.messageType == MSG_TYPE_POLL_REQ && (packet.receiverID == 5 || packet.sourceNodeID == 5)) {
+            // เช็คเฉพาะ receiverID เพราะ field นี้ถูก Repeater เขียนใหม่ตอน forward เท่านั้น
+            if (packet.messageType == MSG_TYPE_POLL_REQ && packet.receiverID == 5) {
                 Serial.println("Received POLL_REQ for Node 5 (RongPui). Measuring...");
                 globalBatteryVoltage = readBatteryVoltage();
                 uint8_t pct = measureAndCalculatePercentage();
