@@ -107,6 +107,7 @@ const char* notification_status_topic = "notification_status";
 const char* request_data_topic = "request_data";
 const char* master_status_topic = "master_status";           // LWT: "online"/"offline" สำหรับให้แอปเช็คว่า Master ยังออนไลน์อยู่จริงไหม
 const char* master_last_update_topic = "master_last_update";  // เวลาจริง (NTP) ที่ publish ชุดข้อมูลล่าสุด เอาไว้เทียบกับเวลาปัจจุบันในแอปเอง
+const char* link_quality_topic_prefix = "link_quality/";      // RSSI/SNR จาก Node ถึง Repeater
 
 // Flag to track when new data is received
 volatile bool newDataReceived = false;
@@ -210,6 +211,8 @@ Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
 };
 
 const int numNodes = sizeof(nodes) / sizeof(nodes[0]);
+volatile int16_t nodeToRepeaterRssi[numNodes];
+volatile int8_t nodeToRepeaterSnr[numNodes];
 unsigned long nodeLowWaterStartTime[numNodes] = {0}; // จับเวลาสำหรับเงื่อนไขพิเศษของ TaiFa, KhonPD, SuanMM
 const int LOW_THRESHOLD = 10; // จำนวนครั้งที่ต้องอ่านค่าต่ำกว่า Threshold ติดกันเพื่อแจ้งเตือน
 const uint8_t COMM_FAILURE_THRESHOLD = 3; // ต้องไม่ตอบติดต่อกันกี่รอบจึงแจ้งเตือน Comm Error
@@ -517,10 +520,13 @@ bool pollSingleNode(int nodeIdx) {
                 if (rxPacket.messageType == MSG_TYPE_LINK_QUALITY &&
                     rxPacket.receiverID == 100 && rxPacket.senderID == 101 &&
                     rxPacket.sourceNodeID == targetID) {
-                    int16_t nodeToRepeaterRssi = (int16_t)rxPacket.battery;
-                    int8_t nodeToRepeaterSnr = (int8_t)rxPacket.value - 128;
+                    int16_t measuredRssi = (int16_t)rxPacket.battery;
+                    int8_t measuredSnr = (int8_t)rxPacket.value - 128;
+                    nodeToRepeaterRssi[nodeIdx] = measuredRssi;
+                    nodeToRepeaterSnr[nodeIdx] = measuredSnr;
+                    pendingMQTTDataSync = true;
                     Serial.printf("Node %d -> Repeater link: RSSI=%d dBm, SNR=%d dB\n",
-                                  targetID, nodeToRepeaterRssi, nodeToRepeaterSnr);
+                                  targetID, measuredRssi, measuredSnr);
                     continue;
                 }
 
@@ -885,6 +891,13 @@ void sendMQTTData() {
                 publishMessage(batTopic.c_str(), String(nodes[i].battery, 2), true);
             }
         }
+
+        if (nodeToRepeaterRssi[i] != -127) {
+            String linkTopic = String(link_quality_topic_prefix) + nodes[i].mqttTopic;
+            String linkPayload = "{\"rssi\":" + String(nodeToRepeaterRssi[i]) +
+                                 ",\"snr\":" + String(nodeToRepeaterSnr[i]) + "}";
+            publishMessage(linkTopic.c_str(), linkPayload, true);
+        }
     }
 
     if (newDataReceived) {
@@ -955,6 +968,8 @@ void setup() {
     // เริ่มต้นเวลาสื่อสารสำหรับทุก Node
     for (int i = 0; i < numNodes; i++) {
         nodes[i].lastSeen = millis();
+        nodeToRepeaterRssi[i] = -127;
+        nodeToRepeaterSnr[i] = -128;
     }
     lastRepeaterSeen = millis(); // เริ่มนับเวลา Repeater ตั้งแต่เปิดเครื่อง
 

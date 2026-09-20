@@ -1,0 +1,13 @@
+{
+  "name": "wat-doi-dashboard-gateway",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mqtt": "^5.10.3"
+  }
+}

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wat Doi Monitoring</title>
+  <style>
+    :root {
+      --bg: #101315;
+      --panel: #171b1e;
+      --panel-2: #1d2326;
+      --line: #30383c;
+      --text: #edf1ef;
+      --muted: #899397;
+      --green: #8dc9a7;
+      --amber: #e7b86d;
+      --red: #e07b75;
+      --blue: #84b9d0;
+      --shadow: 0 16px 36px rgba(0, 0, 0, .22);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 75% -20%, #26302f 0, transparent 38%), var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      min-height: 100vh;
+    }
+    .shell { max-width: 1440px; margin: auto; padding: 28px 32px 44px; }
+    header { display: flex; justify-content: space-between; align-items: end; gap: 24px; border-bottom: 1px solid var(--line); padding-bottom: 22px; }
+    .eyebrow { color: var(--green); font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 2px; text-transform: uppercase; }
+    h1 { font-size: clamp(30px, 5vw, 54px); font-weight: 400; letter-spacing: 0; margin: 9px 0 4px; }
+    .sub { color: var(--muted); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .connection { display: flex; align-items: center; gap: 9px; color: var(--green); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px rgba(141, 201, 167, .12); }
+    .dot.offline { background: var(--red); box-shadow: 0 0 0 5px rgba(224, 123, 117, .12); }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0 30px; }
+    .summary-card, .node { background: linear-gradient(145deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); box-shadow: var(--shadow); }
+    .summary-card { padding: 18px 20px; min-height: 105px; }
+    .label { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: 1px; }
+    .big { display: block; font-size: 31px; margin-top: 12px; }
+    .good { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--red); }
+    section { margin-top: 24px; }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+    h2 { font-size: 21px; font-weight: 400; margin: 0; }
+    .section-note { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .nodes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+    .node { aspect-ratio: 1; padding: 18px; position: relative; overflow: hidden; }
+    .node.spd { grid-column: 1 / -1; aspect-ratio: auto; min-height: 150px; }
+    .battery-card { grid-column: span 2; aspect-ratio: auto; min-height: 118px; padding: 18px; }
+    .battery-card .voltage { color: var(--green); font-size: 36px; margin-top: 14px; }
+    .node::after { content: ""; position: absolute; inset: auto -30px -52px auto; width: 130px; height: 130px; border: 1px solid rgba(141, 201, 167, .13); border-radius: 50%; }
+    .node-top { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+    .node-name { font-size: 20px; }
+    .node-id { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 5px; }
+    .state { border: 1px solid currentColor; padding: 4px 7px; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .meter { width: min(154px, 72%); aspect-ratio: 1; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--level) * 1%), #293033 0); margin: 20px auto 14px; display: grid; place-items: center; position: relative; }
+    .meter::after { content: ""; width: calc(100% - 32px); aspect-ratio: 1; border-radius: 50%; background: var(--panel); position: absolute; }
+    .meter.low { background: conic-gradient(var(--amber) calc(var(--level) * 1%), #293033 0); }
+    .meter > span { position: relative; z-index: 1; color: var(--text); font: 700 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .reading { display: flex; justify-content: space-between; align-items: baseline; }
+    .percent { font-size: 34px; }
+    .unit { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .meta { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .bottom { display: grid; grid-template-columns: 1.3fr .7fr; gap: 12px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); padding: 20px; }
+    .timeline { display: grid; gap: 14px; margin-top: 17px; }
+    .event { display: grid; grid-template-columns: 80px 1fr; gap: 14px; font-size: 14px; }
+    .event time { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding-top: 2px; }
+    .event p { margin: 0; color: #c6cecb; }
+    .event p span { color: var(--muted); display: block; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; }
+    .system-list { display: grid; gap: 16px; margin-top: 18px; }
+    .system-row { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; }
+    .system-row span:last-child { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .control { display: flex; align-items: center; gap: 10px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; inset: 0; background: #2a3134; border: 1px solid var(--line); transition: .2s; }
+    .slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: var(--muted); transition: .2s; }
+    .switch input:checked + .slider { border-color: var(--green); background: rgba(141, 201, 167, .12); }
+    .switch input:checked + .slider::before { transform: translateX(18px); background: var(--green); }
+    .switch input:disabled + .slider { cursor: not-allowed; opacity: .5; }
+    footer { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 28px; }
+    @media (max-width: 1050px) { .nodes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .battery-card { grid-column: span 1; } .summary { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 720px) { .shell { padding: 22px 16px 34px; } header { align-items: start; flex-direction: column; } .summary, .bottom { grid-template-columns: 1fr; } .node { padding: 12px; } .battery-card { grid-column: span 1; min-height: 96px; } .battery-card .voltage { font-size: 26px; } .node-name { font-size: 16px; } .node-id, .state, .unit, .meta { font-size: 9px; } .meter { margin-top: 14px; margin-bottom: 10px; transform: translateY(-8px); } .meter::after { width: calc(100% - 18px); } .percent { font-size: 25px; } .summary-card { min-height: 88px; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Field Operations / Wat Doi</div>
+        <h1>Water Monitoring</h1>
+        <div class="sub">ภาพรวมระดับน้ำและสถานะระบบภาคสนาม</div>
+      </div>
+      <div class="connection"><span class="dot" id="masterDot"></span><span id="masterState">MASTER ONLINE</span></div>
+    </header>
+
+    <div class="summary">
+      <div class="summary-card"><span class="label">Nodes responding</span><span class="big" id="responding">-- / --</span></div>
+      <div class="summary-card"><span class="label">Last update</span><span class="big" id="lastUpdate">--</span></div>
+      <div class="summary-card"><span class="label">Repeater link</span><span class="big" id="repeaterLink">UNKNOWN</span></div>
+      <div class="summary-card"><span class="label">Alerts</span><span class="big" id="alertCount">-- active</span></div>
+    </div>
+
+    <section>
+      <div class="section-head"><h2>Tank readings</h2><span class="section-note">LIVE / refreshed every 3 min</span></div>
+      <div class="nodes" id="nodes"></div>
+    </section>
+
+    <section class="bottom">
+      <div class="panel"><div class="section-head"><h2>Recent events</h2><span class="section-note">SYSTEM LOG</span></div><div class="timeline" id="events"></div></div>
+      <div class="panel"><div class="section-head"><h2>System status</h2><span class="section-note">MASTER 100</span></div><div class="system-list"><div class="system-row"><span>MQTT connection</span><span id="mqttStatus">WAITING</span></div><div class="system-row"><span>Notification service</span><span class="control"><span id="notificationStatus">WAITING</span><label class="switch"><input id="notificationSwitch" type="checkbox" disabled><span class="slider"></span></label></span></div><div class="system-row"><span>Data freshness</span><span id="freshnessStatus">WAITING</span></div><div class="system-row"><span>Battery nodes</span><span>2 monitored</span></div></div></div>
+    </section>
+    <footer>Wat Doi Monitoring System · Read-only dashboard · <span id="updatedAt">Waiting for live data</span></footer>
+  </main>
+  <script>
+    const nodeEl = document.querySelector('#nodes');
+    const notificationSwitch = document.querySelector('#notificationSwitch');
+    const batteryCard = (label, id) => `<article class="node battery-card"><span class="label">${label}</span><span class="big voltage" id="${id}">-- V</span></article>`;
+    function renderNodes(nodes) {
+      const waterCards = nodes.filter(node => node.kind !== 'spd').map(({ name, id, value, error }) => {
+        const state = error ? 'low' : Number(value) < 50 ? 'low' : 'normal';
+        const label = `${value ?? '--'}%`;
+        const meter = value === null ? '' : `<div class="meter ${state === 'low' ? 'low' : ''}" style="--level:${value}"><span>${value}%</span></div>`;
+        return `<article class="node"><div class="node-top"><div><div class="node-name">${name}</div><div class="node-id">NODE ${id}</div></div><div class="state ${state === 'low' ? 'warn' : 'good'}">${state.toUpperCase()}</div></div>${meter}<div class="reading"><span class="percent ${state === 'low' ? 'warn' : 'good'}">${label}</span><span class="unit">water level</span></div><div class="meta"><span>Polling mode</span><span>3 min cycle</span></div></article>`;
+      }).join('');
+      const batteryCards = batteryCard('ThamYai battery', 'thamYaiBattery') + batteryCard('RongPui battery', 'rongPuiBattery');
+      const spdCards = nodes.filter(node => node.kind === 'spd').map(({ name, id, value }) => {
+        const label = value === 0 ? 'SPD OK' : 'SPD ALERT';
+        return `<article class="node spd"><div class="node-top"><div><div class="node-name">${name}</div><div class="node-id">NODE ${id}</div></div><div class="state good">SPD</div></div><div class="reading"><span class="percent good">${label}</span><span class="unit">protection status</span></div><div class="meta"><span>Polling mode</span><span>3 min cycle</span></div></article>`;
+      }).join('');
+      nodeEl.innerHTML = waterCards + batteryCards + spdCards;
+    }
+    nodeEl.innerHTML = '<div class="panel">Waiting for live node data...</div>';
+
+    // Production gateway contract: GET /api/dashboard should return { nodes, system, events }.
+    function refreshDashboard() {
+      fetch('/api/dashboard').then(r => r.ok ? r.json() : Promise.reject()).then(data => {
+      document.querySelector('#updatedAt').textContent = `Updated ${new Date().toLocaleTimeString('th-TH')}`;
+      renderNodes(data.nodes);
+      document.querySelector('#responding').textContent = `${data.system.responding} / ${data.system.total}`;
+      document.querySelector('#lastUpdate').textContent = data.system.lastUpdate || '--';
+      document.querySelector('#alertCount').textContent = `${data.system.alertCount} active`;
+      const thamYai = data.nodes.find((node) => node.topic === 'ThamYai');
+      const rongPui = data.nodes.find((node) => node.topic === 'RongPui');
+      document.querySelector('#thamYaiBattery').textContent = thamYai?.batteryValue === null || thamYai?.batteryValue === undefined ? '-- V' : `${Number(thamYai.batteryValue).toFixed(2)} V`;
+      document.querySelector('#rongPuiBattery').textContent = rongPui?.batteryValue === null || rongPui?.batteryValue === undefined ? '-- V' : `${Number(rongPui.batteryValue).toFixed(2)} V`;
+      document.querySelector('#repeaterLink').textContent = data.system.repeaterLink.toUpperCase();
+      document.querySelector('#mqttStatus').textContent = data.system.mqttConnected ? 'CONNECTED' : 'OFFLINE';
+      document.querySelector('#notificationStatus').textContent = data.system.notificationEnabled === null ? 'UNKNOWN' : data.system.notificationEnabled ? 'ENABLED' : 'DISABLED';
+      notificationSwitch.checked = data.system.notificationEnabled === true;
+      notificationSwitch.disabled = !data.system.mqttConnected || data.system.notificationEnabled === null;
+      document.querySelector('#freshnessStatus').textContent = data.system.lastUpdate ? 'CURRENT' : 'WAITING';
+      document.querySelector('#masterDot').classList.toggle('offline', data.system.masterOnline === false);
+      document.querySelector('#masterState').textContent = data.system.masterOnline ? 'MASTER ONLINE' : 'MASTER OFFLINE';
+      document.querySelector('#events').innerHTML = data.events.map(({ time, title, detail }) => `<div class="event"><time>${new Date(time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</time><p>${title}<span>${detail}</span></p></div>`).join('');
+      }).catch(() => {});
+    }
+    notificationSwitch.addEventListener('change', () => {
+      notificationSwitch.disabled = true;
+      fetch('/api/notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: notificationSwitch.checked })
+      }).then(r => r.ok ? r.json() : Promise.reject()).then(() => refreshDashboard()).catch(() => refreshDashboard());
+    });
+    refreshDashboard();
+    setInterval(refreshDashboard, 15000);
+  </script>
+</body>
+</html>
