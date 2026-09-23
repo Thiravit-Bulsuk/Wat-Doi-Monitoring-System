@@ -70,7 +70,7 @@ RTC_DATA_ATTR bool hasSentInitialZero = false; // ส่ง 0% ครั้ง�
 float globalBatteryVoltage = 0.0; // เก็บค่าแบตเตอรี่ที่วัดได้ตอนเริ่มระบบ
 
 // Forward declaration
-float readDistance();
+float readDistance(bool enforceSensorLimit = true);
 float readBatteryVoltage();
 
 // Function to initialize LoRa module
@@ -97,7 +97,7 @@ void showStatus() {
     display.drawString(64, 20, "Measuring...");
     display.display();
 
-    float d = readDistance();
+    float d = readDistance(false);
     Serial.print("Manual Read Distance: "); Serial.println(d);
 
     display.clear();
@@ -142,7 +142,7 @@ void smartDelay(unsigned long ms) {
 }
 
 // Function to read distance from sensor with timeout
-float readDistance() {
+float readDistance(bool enforceSensorLimit) {
     // Layer 1: Density-based Selection
     const int BURST_COUNT = 20;     // อ่าน 20 ครั้ง
     const int MAX_RETRIES = 3;      // ลองใหม่ได้ 3 รอบถ้าผลไม่ชัดเจน
@@ -168,7 +168,7 @@ float readDistance() {
             float dist = (duration * 0.0343) / 2;
             
             // กรอง Noise ระยะสั้น (<25cm) หรือไกลเกินขีดจำกัด (450cm) หรือ Timeout (0) ให้เป็น Error
-            if (duration == 0 || dist < 25.0 || dist > SENSOR_LIMIT_CM) { 
+            if (duration == 0 || dist < 25.0 || (enforceSensorLimit && dist > SENSOR_LIMIT_CM)) { 
                 errorCount++;
             } else {
                 validReadings[validCount++] = dist;
