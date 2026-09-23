@@ -45,7 +45,7 @@
     h2 { font-size: 21px; font-weight: 400; margin: 0; }
     .section-note { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
     .nodes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-    .node { aspect-ratio: 1; padding: 18px; position: relative; overflow: hidden; }
+    .node { aspect-ratio: 1; padding: 18px 18px 20px; position: relative; overflow: hidden; }
     .node.spd { grid-column: 1 / -1; aspect-ratio: auto; min-height: 150px; }
     .battery-card { grid-column: span 2; aspect-ratio: auto; min-height: 118px; padding: 18px; }
     .battery-card .voltage { color: var(--green); font-size: 36px; margin-top: 14px; }
@@ -54,12 +54,12 @@
     .node-name { font-size: 20px; }
     .node-id { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 5px; }
     .state { border: 1px solid currentColor; padding: 4px 7px; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .meter { width: min(154px, 72%); aspect-ratio: 1; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--level) * 1%), #293033 0); margin: 20px auto 14px; display: grid; place-items: center; position: relative; }
-    .meter::after { content: ""; width: calc(100% - 32px); aspect-ratio: 1; border-radius: 50%; background: var(--panel); position: absolute; }
+    .meter { --ring-gap: 22px; width: min(154px, 72%); aspect-ratio: 1; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--level) * 1%), #293033 0); margin: 18px auto 12px; display: grid; place-items: center; position: relative; }
+    .meter::after { content: ""; width: calc(100% - var(--ring-gap)); aspect-ratio: 1; border-radius: 50%; background: var(--panel); position: absolute; }
     .meter.low { background: conic-gradient(var(--amber) calc(var(--level) * 1%), #293033 0); }
     .meter > span { position: relative; z-index: 1; color: var(--text); font: 700 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .reading { display: flex; justify-content: space-between; align-items: baseline; }
-    .percent { font-size: 34px; }
+    .reading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 4px; padding-bottom: 6px; }
+    .percent { font-size: clamp(28px, 3vw, 42px); line-height: 1.05; font-weight: 700; }
     .unit { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
     .meta { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
     .bottom { display: grid; grid-template-columns: 1.3fr .7fr; gap: 12px; }
@@ -82,7 +82,7 @@
     .switch input:disabled + .slider { cursor: not-allowed; opacity: .5; }
     footer { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 28px; }
     @media (max-width: 1050px) { .nodes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .battery-card { grid-column: span 1; } .summary { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 720px) { .shell { padding: 22px 16px 34px; } header { align-items: start; flex-direction: column; } .summary, .bottom { grid-template-columns: 1fr; } .node { padding: 12px; } .battery-card { grid-column: span 1; min-height: 96px; } .battery-card .voltage { font-size: 26px; } .node-name { font-size: 16px; } .node-id, .state, .unit, .meta { font-size: 9px; } .meter { margin-top: 14px; margin-bottom: 10px; transform: translateY(-8px); } .meter::after { width: calc(100% - 18px); } .percent { font-size: 25px; } .summary-card { min-height: 88px; } }
+    @media (max-width: 720px) { .shell { padding: 22px 16px 34px; } header { align-items: start; flex-direction: column; } .summary, .bottom { grid-template-columns: 1fr; } .node { padding: 12px 10px 14px; display: flex; flex-direction: column; gap: 0; aspect-ratio: auto; min-height: 228px; } .battery-card { grid-column: span 1; min-height: 104px; } .battery-card .voltage { font-size: 26px; } .node-name { font-size: 16px; } .node-id, .state, .meta { font-size: 9px; } .unit { font-size: 9px; } .meter { --ring-gap: 16px; width: min(120px, 62%); margin: 14px auto 8px; transform: translateY(-2px); } .meter::after { width: calc(100% - var(--ring-gap)); } .reading { gap: 0; margin-top: 0; padding-bottom: 12px; justify-content: flex-start; align-items: flex-start; flex-direction: row; min-height: auto; width: 100%; } .percent { font-size: 30px; line-height: 1; margin-left: 4px; } .unit { margin-left: 6px; align-self: center; } .meta { margin-top: auto; padding-top: 9px; } .summary-card { min-height: 88px; } }
   </style>
 </head>
 <body>

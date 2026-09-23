@@ -91,6 +91,8 @@ float readDistance(uint8_t triggerPin, uint8_t echoPin) {
     const int MAX_RETRIES = 3;      // ลองใหม่ได้ 3 รอบถ้าผลไม่ชัดเจน
     const float CLUSTER_RANGE = 5.0;// ระยะห่างที่ถือว่าเป็นกลุ่มเดียวกัน (cm)
     const int MIN_CLUSTER_SIZE = 5; // ต้องเกาะกลุ่มกันอย่างน้อย 5 ค่า
+    const float MIN_VALID_DISTANCE = 10.0; // ระยะที่ถูกต้องทางกายภาพสำหรับถังนี้ (cm)
+    const float MAX_VALID_DISTANCE = 500.0;
 
     for (int retry = 0; retry < MAX_RETRIES; retry++) {
         float validReadings[BURST_COUNT];
@@ -108,9 +110,9 @@ float readDistance(uint8_t triggerPin, uint8_t echoPin) {
             long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
             float dist = (duration * 0.0343) / 2;
             
-            // ปรับระยะการกรอง Noise ให้เหมาะสมกับระยะเต็มจริงที่ 25cm
-            // ใช้ 22.0 เพื่อให้มีระยะเผื่อนิดหน่อยก่อนถึงระยะเต็ม (25.0)
-            if (duration == 0 || dist < 22.0) { 
+            // ระยะใกล้เต็ม (25-30 cm) ไม่ควรถูกคัดออกเป็น error
+            // ถ้าระยะอ่านได้ต่ำกว่า 10 cm หรือมากกว่า 500 cm จึงถือว่า invalid
+            if (duration == 0 || dist < MIN_VALID_DISTANCE || dist > MAX_VALID_DISTANCE) {
                 errorCount++;
             } else {
                 validReadings[validCount++] = dist;
@@ -188,8 +190,23 @@ uint8_t measureTank2() {
 
     uint8_t percentage1 = 0;
 
+    // ป้องกันกรณีถังเต็ม/ใกล้เต็ม ถูกอ่านผิดพลาดหรือค้างจากค่าก่อนหน้า
+    if (distance1 <= (TANK2_FULL_CM + 8)) {
+        Serial.println("Tank 2 near/full: forcing 100%.");
+        lastValidDistance1 = distance1;
+        isTankEmpty1 = false;
+        refillCount1 = 0;
+        return 100;
+    }
+
     if (distance1 < 0) {
         Serial.println("Error reading distance from Sensor 1 (Tank 2).");
+        if (lastValidDistance1 <= (TANK2_FULL_CM + 8)) {
+            Serial.println("Previous Tank 2 value was full/near-full. Forcing 100%.");
+            isTankEmpty1 = false;
+            refillCount1 = 0;
+            return 100;
+        }
         if (lastValidDistance1 > (TANK2_EMPTY_CM - 40)) { 
             isTankEmpty1 = true;
             percentage1 = 0;
