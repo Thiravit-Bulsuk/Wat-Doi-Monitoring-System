@@ -27,7 +27,7 @@
 const int TANK_FULL_CM = 82;
 const int TANK_EMPTY_CM = 500; // ความสูงจริงของแทงก์ (เซ็นเซอร์ถึงก้นแทงก์ 5 เมตร)
 const int SENSOR_LIMIT_CM =
-    450; // ขีดจำกัดทางกายภาพของเซ็นเซอร์ JSN-SR04T (4.5 เมตร)
+    360; // ขีดจำกัดทางกายภาพของเซ็นเซอร์ JSN-SR04T (3.6 เมตร)
 
 const uint32_t Frequency = 923000000; // Frequency of transmissions
 const uint32_t Offset = 0; // Offset frequency for calibration purposes
@@ -128,7 +128,11 @@ void showStatus() {
     calc_percentage = constrain(calc_percentage, 0, 100);
     uint8_t percentage = (uint8_t)calc_percentage;
     lastPercentage = percentage;
-    display.drawString(64, 20, String(percentage) + " %"); // แสดงเปอร์เซ็นต์น้ำ
+
+    float dist_m = d / 100.0; // แปลงเซนติเมตรเป็นเมตร
+    
+    // แสดงผลเปอร์เซ็นต์ร่วมกับระยะทาง เช่น "85% (1.25m)"
+    display.drawString(64, 20, String(percentage) + " % (" + String(dist_m, 2) + "m)"); // แสดงเปอร์เซ็นต์น้ำร่วมกับระยะทาง
   }
 
   display.setFont(ArialMT_Plain_10); // กลับไปใช้ Font เล็กสำหรับข้อความสถานะ
@@ -177,17 +181,17 @@ float readDistance() {
       delayMicroseconds(10);
       digitalWrite(TRIGGER_PIN, LOW);
 
-      long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
+      long duration = pulseIn(ECHO_PIN, HIGH, 40000); // 40ms timeout
       float dist = (duration * 0.0343) / 2;
 
-      // กรอง Noise ระยะสั้น (<25cm) หรือไกลเกินขีดจำกัด (450cm) หรือ Timeout (0) ให้เป็น
+      // กรอง Noise ระยะสั้น (<25cm) หรือไกลเกินขีดจำกัด (360cm) หรือ Timeout (0) ให้เป็น
       // Error
       if (duration == 0 || dist < 25.0 || dist > SENSOR_LIMIT_CM) {
         errorCount++;
       } else {
         validReadings[validCount++] = dist;
       }
-      delay(20); // หน่วงเวลาเล็กน้อยระหว่างยิง
+      delay(80); // หน่วงเวลาเล็กน้อยระหว่างยิง
     }
 
     // 2. Analysis (ถ้า Error เยอะเกินไป และ Valid น้อยกว่าขั้นต่ำ)
@@ -308,7 +312,7 @@ uint8_t measureAndCalculatePercentage() {
       percentage = 100;
       hasSentInitialZero = true;
     } else if (lastValidDistance > (SENSOR_LIMIT_CM - 30)) {
-      Serial.println("Water below sensor range (> 4.5m). Reporting 0%.");
+      Serial.println("Water below sensor range (> 3.6m). Reporting 0%.");
       isTankEmpty = true;
       percentage = 0;
     } else {

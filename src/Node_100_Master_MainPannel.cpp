@@ -168,7 +168,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #define RESET_BUTTON_PIN 1  // ย้ายจาก 47 มาขา 1 เนื่องจากขา 47 เสีย (ตอนนี้ใช้เพิ่มความสว่างจอชั่วคราวเท่านั้น reset notification ย้ายไปสั่งผ่าน MQTT อย่างเดียว)
 const uint8_t DISPLAY_BRIGHTNESS_IDLE = 6;     // ความสว่างขณะพัก ~10% (0-255)
 const uint8_t DISPLAY_BRIGHTNESS_ACTIVE = 255; // ความสว่างระหว่างแสดงข้อมูล ~100%
-const unsigned long DISPLAY_BOOST_DURATION_MS = 60000; // ระยะเวลาความสว่างสูงหลังกดปุ่ม (1 นาที)
+const unsigned long DISPLAY_BOOST_DURATION_MS = 120000; // ระยะเวลาความสว่างสูงหลังกดปุ่ม (2 นาที)
 const unsigned long LED_HEARTBEAT_INTERVAL_MS = 20000; // กระพริบ LED ทุก 20 วินาทีเมื่อจอปิด
 const unsigned long LED_HEARTBEAT_ON_MS = 250;          // ระยะเวลาที่ LED ติดในแต่ละรอบ
 
@@ -201,7 +201,7 @@ Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
     {1, "JD",       "JD",       50, RELAY_PIN_1, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {2, "PhraNon",  "PhraNon",  50, RELAY_PIN_2, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
-    {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {4, "ThamYai",  "ThamYai",  70, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {6, "TaiFa",    "TaiFa",    10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {7, "KhonPD",   "KhonPD",   10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
