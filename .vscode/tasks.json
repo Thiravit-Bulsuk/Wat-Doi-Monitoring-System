@@ -5,6 +5,10 @@
             "label": "PlatformIO: Upload and Monitor",
             "type": "shell",
             "command": "source \"$HOME/.zshrc\" && platformio run --target upload --environment ${input:pioEnvironment} --upload-port ${input:pioPort} && platformio device monitor --environment ${input:pioEnvironment} --port ${input:pioPort}",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
             "options": {
                 "shell": {
                     "executable": "/bin/zsh",
