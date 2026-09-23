@@ -45,9 +45,8 @@ TaskHandle_t TaskResetTimer; // Task Handle สำหรับรีเซ็ต
 TaskHandle_t TaskDisplay;
 TaskHandle_t TaskButton;
 
-// Timer สำหรับการอัปเดตหน้าจอ และ MQTT
+// Timer สำหรับการอัปเดตหน้าจอ
 SimpleTimer displayTimer;
-SimpleTimer mqttTimer;
 
 // ตัวแปรสำหรับสถานะการแสดงผล (วนรอบระหว่าง 0-12)
 // ตัวแปร global track state และพักหน้าจอ
@@ -63,7 +62,6 @@ volatile bool internetConnected = false;  // กำหนดค่าเริ�
 
 // ==== System Timing Constants ====
 const unsigned long RECOVERY_GRACE_PERIOD = 900000; // 15 นาที (งดแจ้งเตือนราย Node หลัง Repeater ฟื้น)
-const unsigned long mqttSendInterval = 600000;      // 10 นาที (รอบการส่งข้อมูลขึ้น MQTT)
 const float BATTERY_LOW_THRESHOLD = 2.40;           // แจ้งเตือนเมื่อแบตเตอรี่ต่ำกว่า 2.4V
 const float BATTERY_RECOVER_THRESHOLD = 3.50;        // ต้องขึ้นเกิน 3.5V ก่อนถึงจะถือว่ากลับมาปกติ (กันแจ้งเตือนรัวๆ ที่ค่าแกว่งใกล้ threshold)
 
@@ -201,7 +199,7 @@ Node nodes[] = { // กำหนด Node ทั้งหมดในระบบ
     {1, "JD",       "JD",       50, RELAY_PIN_1, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {2, "PhraNon",  "PhraNon",  50, RELAY_PIN_2, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {3, "Plastic",  "Plastic",  10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
-    {4, "ThamYai",  "ThamYai",  70, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
+    {4, "ThamYai",  "ThamYai",  50, RELAY_PIN_3, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {5, "RongPui",  "RongPui",  50, RELAY_PIN_4, MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {6, "TaiFa",    "TaiFa",    10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
     {7, "KhonPD",   "KhonPD",   10, 0,           MSG_TYPE_WATER, -1, 0, 0.0, STATE_NORMAL, STATE_NORMAL, 0, false, 0},
@@ -524,7 +522,8 @@ bool pollSingleNode(int nodeIdx) {
                     int8_t measuredSnr = (int8_t)rxPacket.value - 128;
                     nodeToRepeaterRssi[nodeIdx] = measuredRssi;
                     nodeToRepeaterSnr[nodeIdx] = measuredSnr;
-                    pendingMQTTDataSync = true;
+                    // Do not publish here; wait until the full polling cycle ends so the MQTT payload
+                    // reflects the complete batch for all nodes, not an intermediate partial update.
                     Serial.printf("Node %d -> Repeater link: RSSI=%d dBm, SNR=%d dB\n",
                                   targetID, measuredRssi, measuredSnr);
                     continue;
@@ -579,7 +578,6 @@ bool pollNodeWithRetries(int nodeIdx) {
         nodes[nodeIdx].commState == STATE_NORMAL) {
         nodes[nodeIdx].commState = STATE_COMM_ERROR;
         sendAdminMessage("แจ้งเตือน: การสื่อสารขัดข้องที่ DataNode " + nodes[nodeIdx].name + " (ไม่ตอบกลับคำขอ)");
-        pendingMQTTDataSync = true;
     }
 
     return false;
@@ -627,7 +625,6 @@ void pollAllNodes() {
             for (int i = 0; i < numNodes; i++) {
                 nodes[i].commState = STATE_COMM_ERROR;
             }
-            pendingMQTTDataSync = true;
         }
     } else {
         repeaterFailureCount = 0;
@@ -636,8 +633,10 @@ void pollAllNodes() {
             repeaterErrorActive = false;
             lastRepeaterRecoveryTime = millis();
         }
-        pendingMQTTDataSync = true; // อัปเดตข้อมูลขึ้น MQTT
     }
+
+    // ส่งข้อมูลขึ้น MQTT ครั้งเดียวเมื่อ polling cycle จบสมบูรณ์
+    pendingMQTTDataSync = true;
 }
 
 // ฟังก์ชันจัดการเมื่อ Node กลับมาออนไลน์ เพื่อให้โค้ดหลักสะอาดขึ้น
@@ -655,7 +654,6 @@ void handleNodeRecovery(int nodeIdx) {
         }
     }
     nodes[nodeIdx].commState = STATE_NORMAL;
-    pendingMQTTDataSync = true; // อัปเดตสถานะขึ้น MQTT ทันทีเมื่อกลับมาปกติ
 }
 
 // Function to activate relay based on tank ID
@@ -973,8 +971,6 @@ void setup() {
     }
     lastRepeaterSeen = millis(); // เริ่มนับเวลา Repeater ตั้งแต่เปิดเครื่อง
 
-    // Set up the MQTT Timer to call `sendMQTTData` every 10 minutes
-    mqttTimer.setInterval(mqttSendInterval, sendMQTTData);
     // Create tasks
     xTaskCreate(MainTask, "MainTask", 10000, NULL, 1, &TaskMain);
 
@@ -1087,8 +1083,6 @@ void MainTask(void *parameter) {
             }
         } else {
             client.loop();
-            mqttTimer.run();
-
             // MainTask เป็นเจ้าของ client แต่เพียงผู้เดียว จึงมาไล่ประมวลผลคิว/แฟล็กที่ Task อื่นฝากไว้ที่นี่
             MqttTextMessage queuedMsg;
             while (mqttMessageQueue != NULL && xQueueReceive(mqttMessageQueue, &queuedMsg, 0) == pdTRUE) {

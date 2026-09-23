@@ -27,7 +27,7 @@
 const int TANK_FULL_CM = 42;
 const int TANK_EMPTY_CM = 700; // ความสูงจริงของแทงก์ (เซ็นเซอร์ถึงก้นแทงก์ 7 เมตร)
 const int SENSOR_LIMIT_CM =
-    280; // ขีดจำกัดทางกายภาพของเซ็นเซอร์ JSN-SR04T (280 เมตร)
+    400; // ระยะสูงสุดที่ทดสอบกับ hardware แล้ววัดได้เสถียร (4 เมตร)
 
 const uint32_t Frequency = 923000000; // Frequency of transmissions
 const uint32_t Offset = 0; // Offset frequency for calibration purposes
@@ -77,7 +77,7 @@ RTC_DATA_ATTR bool hasSentInitialZero =
 float globalBatteryVoltage = 0.0; // เก็บค่าแบตเตอรี่ที่วัดได้ตอนเริ่มระบบ
 
 // Forward declaration
-float readDistance();
+float readDistance(bool enforceSensorLimit = true);
 float readBatteryVoltage();
 void ButtonTask(void *parameter);
 
@@ -105,7 +105,7 @@ void showStatus() {
   display.drawString(64, 20, "Measuring...");
   display.display();
 
-  float d = readDistance();
+  float d = readDistance(false);
   Serial.print("Manual Read Distance: ");
   Serial.println(d);
 
@@ -160,7 +160,7 @@ void smartDelay(unsigned long ms) {
 }
 
 // Function to read distance from sensor with timeout
-float readDistance() {
+float readDistance(bool enforceSensorLimit) {
   // Layer 1: Density-based Selection
   const int BURST_COUNT = 20;      // อ่าน 20 ครั้ง
   const int MAX_RETRIES = 3;       // ลองใหม่ได้ 3 รอบถ้าผลไม่ชัดเจน
@@ -185,9 +185,10 @@ float readDistance() {
       long duration = pulseIn(ECHO_PIN, HIGH, 40000); // 40ms timeout
       float dist = (duration * 0.0343) / 2;
 
-      // กรอง Noise ระยะสั้น (<25cm) หรือไกลเกินขีดจำกัด (280cm) หรือ Timeout (0) ให้เป็น
+      // กรอง Noise ระยะสั้น (<25cm) หรือไกลเกินขีดจำกัด (400cm) หรือ Timeout (0) ให้เป็น
       // Error
-      if (duration == 0 || dist < 25.0 || dist > SENSOR_LIMIT_CM) {
+      if (duration == 0 || dist < 25.0 ||
+          (enforceSensorLimit && dist > SENSOR_LIMIT_CM)) {
         errorCount++;
       } else {
         validReadings[validCount++] = dist;
