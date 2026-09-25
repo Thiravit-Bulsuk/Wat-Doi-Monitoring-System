@@ -29,6 +29,8 @@
 const int TANK2_ID = 2;
 const int TANK2_FULL_CM = 25;
 const int TANK2_EMPTY_CM = 450;
+const int TANK2_FULL_HYSTERESIS_CM = 8; // 25cm ± 8cm ถือว่าเต็ม/ใกล้เต็ม
+const int TANK2_OVERFLOW_WARNING_CM = 23; // ถ้าระยะน้อยกว่าค่านี้ แปลว่ากำลังล้น/สูงกว่าระดับเต็ม
 
 const int TANK3_ID = 3;
 const int TANK3_FULL_CM = 48; // ปรับค่าใหม่จาก 35 (คำนวณจาก 95%)
@@ -191,7 +193,16 @@ uint8_t measureTank2() {
     uint8_t percentage1 = 0;
 
     // ป้องกันกรณีถังเต็ม/ใกล้เต็ม ถูกอ่านผิดพลาดหรือค้างจากค่าก่อนหน้า
-    if (distance1 <= (TANK2_FULL_CM + 8)) {
+    // ถ้าระยะน้อยกว่า 23 cm => ระดับน้ำเกิน Full calibration จริง ๆ (ล้น/เต็มมาก)
+    if (distance1 <= TANK2_OVERFLOW_WARNING_CM) {
+        Serial.println("Tank 2 overflow/full warning: forcing 100%.");
+        lastValidDistance1 = TANK2_FULL_CM;
+        isTankEmpty1 = false;
+        refillCount1 = 0;
+        return 100;
+    }
+
+    if (distance1 <= (TANK2_FULL_CM + TANK2_FULL_HYSTERESIS_CM)) {
         Serial.println("Tank 2 near/full: forcing 100%.");
         lastValidDistance1 = distance1;
         isTankEmpty1 = false;
@@ -300,7 +311,8 @@ void showStatus() {
     if (d1 >= 0) {
         long p1 = map(d1, TANK2_FULL_CM, TANK2_EMPTY_CM, 100, 0);
         p1 = constrain(p1, 0, 100);
-        t2Str = "T2: " + String(p1) + "%";
+        float distM1 = d1 / 100.0;
+        t2Str = "T2: " + String(p1) + "% (" + String(distM1, 2) + "m)";
     }
     
     // Tank 3 Logic
@@ -308,7 +320,8 @@ void showStatus() {
     if (d2 >= 0) {
         long p2 = map(d2, TANK3_FULL_CM, TANK3_EMPTY_CM, 100, 0);
         p2 = constrain(p2, 0, 100);
-        t3Str = "T3: " + String(p2) + "%";
+        float distM2 = d2 / 100.0;
+        t3Str = "T3: " + String(p2) + "% (" + String(distM2, 2) + "m)";
     }
 
     display.setFont(ArialMT_Plain_16);

@@ -19,9 +19,12 @@
 #define TRIGGER_PIN 6
 #define ECHO_PIN 7
 
-// Battery Measurement Pin (Heltec V3)
+// Battery Measurement Pin
+// Big tank board was replaced with Heltec WiFi LoRa 32 V3.2.
+// Keep the 3.1 logic intact for the fertilizer site board.
 #define ADC_BATTERY_PIN 1
-#define BAT_ADC_CTRL 37 // ขาควบคุมวงจรวัดแบตเตอรี่สำหรับ V3 (ตาม Pinout Map)
+#define ADC_BATTERY_CTRL_PIN 37
+#define HELTEC_BATTERY_IS_V3_2 1
 
 // Define Tank Constants (Calibration)
 const int TANK_FULL_CM = 42;
@@ -94,26 +97,28 @@ bool initLoRa() {
 // Function to display status on OLED when button is pressed
 void showStatus() {
   Serial.println("Button Pressed: Showing Status");
+
+  // 1) Let the board settle before any battery measurement.
+  display.displayOff();
+  VextOFF();
+  delay(500);
+
+  // 2) Measure battery while the board is quiet and the sensor is not powered.
+  globalBatteryVoltage = readBatteryVoltage();
+  Serial.printf("Manual Read Battery: %.2f V\n", globalBatteryVoltage);
+
+  // 3) Only after battery read is complete, power the sensor and measure depth.
   VextON();
   delay(50);
-  display.init();
-
-  display.displayOn();
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_CENTER);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(64, 20, "Measuring...");
-  display.display();
-
   float d = readDistance(false);
   Serial.print("Manual Read Distance: ");
   Serial.println(d);
 
-  // วัดค่าแบตเตอรี่ใหม่ทันทีตอนกดปุ่มและพิมพ์ออก Serial
-  globalBatteryVoltage = readBatteryVoltage();
-  Serial.printf("Manual Read Battery: %.2f V\n", globalBatteryVoltage);
-
+  // 4) Finally initialize OLED and show all results on screen.
+  display.init();
+  display.displayOn();
   display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
   display.drawString(64, 0, "Node 4: ThamYai");
 
@@ -265,28 +270,64 @@ float readDistance(bool enforceSensorLimit) {
 
 // Function to read battery voltage
 float readBatteryVoltage() {
-  // เปิดวงจรวัดแบตเตอรี่ (GPIO 37 ต้องเป็น HIGH เพื่อให้กระแสไหลผ่านวงจรแบ่งแรงดัน)
-  pinMode(BAT_ADC_CTRL, OUTPUT);
-  digitalWrite(BAT_ADC_CTRL, HIGH);
-  delay(20); // รอให้แรงดันไฟนิ่ง
+  // Critical quiet-state check: stop all sensor load before measuring the battery.
+  pinMode(Vext, OUTPUT);
+  digitalWrite(Vext, HIGH); // OFF = remove sensor supply and load droop
 
-  // Multi-sampling อ่านค่า 10 ครั้งแล้วหาค่าเฉลี่ยเพื่อความเสถียร
-  uint32_t mvSum = 0;
-  for (int i = 0; i < 10; i++) {
-    mvSum += analogReadMilliVolts(ADC_BATTERY_PIN);
-    delay(2);
+  pinMode(TRIGGER_PIN, OUTPUT);
+  digitalWrite(TRIGGER_PIN, LOW); // keep ultrasonic burst silent
+
+  // Allow the ADC sampling node and supply rail to settle before reading.
+  delay(500);
+
+  pinMode(ADC_BATTERY_CTRL_PIN, OUTPUT);
+  pinMode(ADC_BATTERY_PIN, INPUT);
+  analogSetPinAttenuation(ADC_BATTERY_PIN, ADC_11db);
+
+  // Heltec WiFi LoRa 32 V3.1/V3.2 battery example formula.
+  // This uses the actual divider ratio 390k/100k and the real multimeter
+  // calibration point to correct the ADC reading.
+  const int ADC_RESOLUTION = 12;
+  const int ADC_MAX = (1 << ADC_RESOLUTION) - 1;
+  const float ADC_FULL_SCALE_V = 3.3f;
+  const int R1 = 390;
+  const int R2 = 100;
+
+  // Use the real firmware display value as the calibration reference, not a
+  // manually compensated value. If the displayed value was 3.82V while the
+  // multimeter measured 3.80V, then the correction factor is 3.80 / 3.82.
+  const float MULTIMETER_VOLTAGE = 3.80f;
+  const float ACTUAL_DISPLAYED_VOLTAGE = 3.42f;
+
+  const float CALIBRATION_FACTOR =
+      (ADC_FULL_SCALE_V / (float)ADC_MAX) *
+      ((float)(R1 + R2) / (float)R2) *
+      (MULTIMETER_VOLTAGE / ACTUAL_DISPLAYED_VOLTAGE);
+
+  const uint8_t SAMPLE_COUNT = 20;
+  uint32_t rawSum = 0;
+#if HELTEC_BATTERY_IS_V3_2
+  digitalWrite(ADC_BATTERY_CTRL_PIN, HIGH);
+#else
+  digitalWrite(ADC_BATTERY_CTRL_PIN, LOW);
+#endif
+  delay(100);
+
+  for (uint8_t i = 0; i < SAMPLE_COUNT; ++i) {
+    rawSum += analogRead(ADC_BATTERY_PIN);
+    delay(10);
   }
-  float avgPinMv = (float)mvSum / 10.0;
+  digitalWrite(ADC_BATTERY_CTRL_PIN, HIGH);
 
-  // ปิดวงจรวัดแบตเตอรี่ทันทีเพื่อประหยัดไฟ
-  digitalWrite(BAT_ADC_CTRL, LOW);
+  float avgRaw = (float)rawSum / (float)SAMPLE_COUNT;
+  float batteryVoltage = avgRaw * CALIBRATION_FACTOR;
 
-  // Heltec V3 Voltage Divider Ratio (Calibrated: 5.04 * (3.90 / 4.02) ≈ 4.89)
-  // แรงดันแบตเตอรี่ (V) = (มิลลิโวลต์ที่ขา ADC / 1000.0) * Divider Ratio
-  const float VOLTAGE_DIVIDER_RATIO = 4.89;
-  float batteryVoltage = (avgPinMv / 1000.0) * VOLTAGE_DIVIDER_RATIO;
+  if (batteryVoltage < 0.0f)
+    batteryVoltage = 0.0f;
+  if (batteryVoltage > 5.5f)
+    batteryVoltage = 5.5f;
 
-  Serial.printf("ADC Pin mV: %.2f mV | Calculated Battery: %.2f V\n", avgPinMv,
+  Serial.printf("ADC raw avg: %.2f | Calculated Battery: %.2f V\n", avgRaw,
                 batteryVoltage);
 
   return batteryVoltage;
@@ -391,8 +432,15 @@ void setup() {
   pinMode(TRIGGER_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   pinMode(PRG_BUTTON, INPUT_PULLUP);
+  pinMode(ADC_BATTERY_CTRL_PIN, OUTPUT);
+#if HELTEC_BATTERY_IS_V3_2
+  digitalWrite(ADC_BATTERY_CTRL_PIN, HIGH);
+#else
+  digitalWrite(ADC_BATTERY_CTRL_PIN, LOW);
+#endif
 
   VextOFF();
+  analogSetPinAttenuation(ADC_BATTERY_PIN, ADC_11db);
 
   globalBatteryVoltage = readBatteryVoltage();
   Serial.printf("Initial Battery: %.2fV\n", globalBatteryVoltage);
@@ -415,7 +463,6 @@ void setup() {
 void ButtonTask(void *parameter) {
   for (;;) {
     if (digitalRead(PRG_BUTTON) == LOW) {
-      globalBatteryVoltage = readBatteryVoltage();
       showStatus();
       while (digitalRead(PRG_BUTTON) == LOW)
         vTaskDelay(10 / portTICK_PERIOD_MS);

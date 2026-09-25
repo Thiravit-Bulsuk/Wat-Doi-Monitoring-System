@@ -45,8 +45,8 @@
     h2 { font-size: 21px; font-weight: 400; margin: 0; }
     .section-note { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
     .nodes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-    .node { aspect-ratio: 1; padding: 18px 18px 20px; position: relative; overflow: hidden; }
-    .node.spd { grid-column: 1 / -1; aspect-ratio: auto; min-height: 150px; }
+    .node { min-height: 330px; padding: 18px 18px 20px; position: relative; overflow: hidden; }
+    .node.spd { grid-column: 1 / -1; aspect-ratio: auto; min-height: 170px; }
     .battery-card { grid-column: span 2; aspect-ratio: auto; min-height: 118px; padding: 18px; }
     .battery-card .voltage { color: var(--green); font-size: 36px; margin-top: 14px; }
     .node::after { content: ""; position: absolute; inset: auto -30px -52px auto; width: 130px; height: 130px; border: 1px solid rgba(141, 201, 167, .13); border-radius: 50%; }
@@ -58,10 +58,10 @@
     .meter::after { content: ""; width: calc(100% - var(--ring-gap)); aspect-ratio: 1; border-radius: 50%; background: var(--panel); position: absolute; }
     .meter.low { background: conic-gradient(var(--amber) calc(var(--level) * 1%), #293033 0); }
     .meter > span { position: relative; z-index: 1; color: var(--text); font: 700 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .reading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 4px; padding-bottom: 6px; }
+    .reading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 8px; padding-bottom: 10px; }
     .percent { font-size: clamp(28px, 3vw, 42px); line-height: 1.05; font-weight: 700; }
     .unit { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .meta { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .meta { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 12px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 34px; }
     .bottom { display: grid; grid-template-columns: 1.3fr .7fr; gap: 12px; }
     .panel { background: var(--panel); border: 1px solid var(--line); padding: 20px; }
     .timeline { display: grid; gap: 14px; margin-top: 17px; }
