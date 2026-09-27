@@ -12,6 +12,7 @@
 - [การตั้งค่าและการคอมไพล์ (Configuration & Build)](#-การตั้งค่าและการคอมไพล์-configuration--build)
 - [MQTT Topics & API Specification](#-mqtt-topics--api-specification)
 - [การแจ้งเตือนและการกู้คืนสถานะ (Alerts & Recovery Logic)](#-การแจ้งเตือนและการกู้คืนสถานะ-alerts--recovery-logic)
+- [เอกสารอ้างอิงด้านแบตเตอรี่และ ADC (Battery / ADC Reference)](#-เอกสารอ้างอิงด้านแบตเตอรี่และ-adc-battery--adc-reference)
 - [การแก้ปัญหาเบื้องต้น (Troubleshooting)](#-การแก้ปัญหาเบื้องต้น-troubleshooting)
 
 ---
@@ -237,6 +238,20 @@ pio run -e repeater_node_101 -t upload
   * ตรวจสอบอายุและสิทธิ์ของ LINE Access Token
 * **ปุ่มกด Reset บน Master ไม่ทำงาน:**
   * ปุ่มต้อง **กดค้างอย่างน้อย 2 วินาที** (เพื่อป้องกัน Noise ทางไฟฟ้าจากสายยาว) ไฟ LED สีขาว (Pin 35) จะติดสว่างระหว่างกดเพื่อยืนยันการกดปุ่ม
+
+---
+
+## 📚 เอกสารอ้างอิงด้านแบตเตอรี่และ ADC (Battery / ADC Reference)
+
+- [Digital Concepts – Battery Management (Heltec WiFi LoRa 32 V3 / V3.2)](https://digitalconcepts.net.au/arduino/index.php?op=Battery)
+  * เป็นข้อมูลอ้างอิงหลักสำหรับการวัดแรงดันแบตเตอรี่บนบอร์ด Heltec WiFi LoRa 32 V3 / V3.2
+  * ครอบคลุมเรื่อง voltage divider, ADC attenuation, GPIO ที่ใช้ร่วมกับแบตเตอรี่, และความแตกต่างของ logic `ADC_Ctrl` ระหว่าง V3 กับ V3.2
+  * สำหรับโครงการนี้มีประโยชน์มาก เพราะ Node 4 และ Node 5 ใช้แบตเตอรี่โซลาร์ + ADC เพื่อคำนวณแรงดันแบตเตอรี่แบบ real-time
+
+- [Heltec Hardware Update Logs](https://docs.heltec.org/en/node/esp32/dev-board/hardware_update_log.html)
+  * ใช้เป็นข้อมูลประกอบเมื่อต้องยืนยันว่าบอร์ดแต่ละรุ่นมีการเปลี่ยน GPIO และ logic การอ่านแบตเตอรี่ที่ไม่เหมือนกัน
+
+> สรุปสั้น: ไฟล์อ้างอิงนี้ช่วยอธิบายว่าการวัดแบตเตอรี่บน ESP32 ต้องคำนึงถึง voltage divider, ADC attenuation และ polarity ของ `ADC_Ctrl` ที่แตกต่างกันตามรุ่นบอร์ด Heltec โดยเฉพาะ V3 กับ V3.2
 
 ---
 

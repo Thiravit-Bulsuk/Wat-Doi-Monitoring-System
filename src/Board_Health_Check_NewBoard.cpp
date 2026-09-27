@@ -21,6 +21,7 @@ BLECharacteristic *healthCharacteristic = nullptr;
 static int testsRun = 0;
 static int testsPassed = 0;
 static bool overallPass = true;
+static bool oledReady = false;
 
 void recordResult(const String &name, bool ok) {
   testsRun++;
@@ -37,6 +38,11 @@ void recordResult(const String &name, bool ok) {
 }
 
 void showOLEDStatus(const String &title, const String &message) {
+  if (!oledReady) {
+    Serial.printf("OLED unavailable; %s: %s\n", title.c_str(), message.c_str());
+    return;
+  }
+
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_10);
@@ -74,6 +80,8 @@ bool testVextPower() {
 }
 
 bool testI2CAndOLED() {
+  oledReady = false;
+
   Wire.begin();
   Wire.beginTransmission(0x3C);
   uint8_t err = Wire.endTransmission();
@@ -82,7 +90,12 @@ bool testI2CAndOLED() {
     return false;
   }
 
-  display.init();
+  if (!display.init()) {
+    Serial.println("OLED init failed");
+    return false;
+  }
+
+  oledReady = true;
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
