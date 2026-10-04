@@ -80,12 +80,58 @@
     .switch input:checked + .slider { border-color: var(--green); background: rgba(141, 201, 167, .12); }
     .switch input:checked + .slider::before { transform: translateX(18px); background: var(--green); }
     .switch input:disabled + .slider { cursor: not-allowed; opacity: .5; }
+    body.loading .shell { opacity: 0; pointer-events: none; }
+    body.loaded .shell { opacity: 1; pointer-events: auto; }
+    .loading-screen {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: rgba(16, 19, 21, 0.8);
+      backdrop-filter: blur(6px);
+      z-index: 20;
+      opacity: 1;
+      visibility: visible;
+      transition: opacity .22s ease, visibility .22s ease;
+    }
+    body.loaded .loading-screen {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .loading-panel {
+      width: min(420px, calc(100% - 32px));
+      padding: 28px 24px;
+      border: 1px solid var(--line);
+      background: rgba(23, 27, 30, 0.94);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .loading-spinner {
+      width: 42px;
+      height: 42px;
+      margin: 0 auto 18px;
+      border-radius: 50%;
+      border: 3px solid rgba(141, 201, 167, .22);
+      border-top-color: var(--green);
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-title { font-size: 24px; font-weight: 700; }
+    .loading-sub { color: var(--muted); margin-top: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1px; text-transform: uppercase; }
     footer { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 28px; }
     @media (max-width: 1050px) { .nodes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .battery-card { grid-column: span 1; } .summary { grid-template-columns: repeat(2, 1fr); } }
     @media (max-width: 720px) { .shell { padding: 22px 16px 34px; } header { align-items: start; flex-direction: column; } .summary, .bottom { grid-template-columns: 1fr; } .node { padding: 12px 10px 14px; display: flex; flex-direction: column; gap: 0; aspect-ratio: auto; min-height: 228px; } .battery-card { grid-column: span 1; min-height: 104px; } .battery-card .voltage { font-size: 26px; } .node-name { font-size: 16px; } .node-id, .state, .meta { font-size: 9px; } .unit { font-size: 9px; } .meter { --ring-gap: 16px; width: min(120px, 62%); margin: 14px auto 8px; transform: translateY(-2px); } .meter::after { width: calc(100% - var(--ring-gap)); } .reading { gap: 0; margin-top: 0; padding-bottom: 12px; justify-content: flex-start; align-items: flex-start; flex-direction: row; min-height: auto; width: 100%; } .percent { font-size: 30px; line-height: 1; margin-left: 4px; } .unit { margin-left: 6px; align-self: center; } .meta { margin-top: auto; padding-top: 9px; } .summary-card { min-height: 88px; } }
   </style>
 </head>
-<body>
+<body class="loading">
+  <div class="loading-screen" aria-live="polite" aria-busy="true">
+    <div class="loading-panel">
+      <div class="loading-spinner"></div>
+      <div class="loading-title">Loading</div>
+      <div class="loading-sub">Connecting to monitoring system</div>
+    </div>
+  </div>
   <main class="shell">
     <header>
       <div>
@@ -118,6 +164,25 @@
     const nodeEl = document.querySelector('#nodes');
     const notificationSwitch = document.querySelector('#notificationSwitch');
     const batteryCard = (label, id) => `<article class="node battery-card"><span class="label">${label}</span><span class="big voltage" id="${id}">-- V</span></article>`;
+
+    function setDashboardLoading(isLoading) {
+      document.body.classList.toggle('loading', isLoading);
+      document.body.classList.toggle('loaded', !isLoading);
+      if (isLoading) {
+        document.querySelector('#updatedAt').textContent = 'Loading live data';
+      }
+    }
+
+    function renderLoadingNodes() {
+      const skeletonCards = Array.from({ length: 5 }, (_, index) => {
+        if (index === 4) {
+          return '<article class="node battery-card" style="opacity: .7"><span class="label">Loading battery</span><span class="big voltage">-- V</span></article>';
+        }
+        return '<article class="node" style="opacity: .7"><div class="node-top"><div><div class="node-name">Loading</div><div class="node-id">NODE --</div></div><div class="state good">LOADING</div></div><div class="meter" style="--level: 0; background: conic-gradient(#2b3235 100%, #293033 0);"><span>--</span></div><div class="reading"><span class="percent good">--%</span><span class="unit">water level</span></div><div class="meta"><span>Polling mode</span><span>wait...</span></div></article>';
+      }).join('');
+      nodeEl.innerHTML = skeletonCards;
+    }
+
     function renderNodes(nodes) {
       const waterCards = nodes.filter(node => node.kind !== 'spd').map(({ name, id, value, error }) => {
         const state = error ? 'low' : Number(value) < 50 ? 'low' : 'normal';
@@ -132,30 +197,36 @@
       }).join('');
       nodeEl.innerHTML = waterCards + batteryCards + spdCards;
     }
-    nodeEl.innerHTML = '<div class="panel">Waiting for live node data...</div>';
+
+    renderLoadingNodes();
 
     // Production gateway contract: GET /api/dashboard should return { nodes, system, events }.
     function refreshDashboard() {
+      setDashboardLoading(true);
       fetch('/api/dashboard').then(r => r.ok ? r.json() : Promise.reject()).then(data => {
-      document.querySelector('#updatedAt').textContent = `Updated ${new Date().toLocaleTimeString('th-TH')}`;
-      renderNodes(data.nodes);
-      document.querySelector('#responding').textContent = `${data.system.responding} / ${data.system.total}`;
-      document.querySelector('#lastUpdate').textContent = data.system.lastUpdate || '--';
-      document.querySelector('#alertCount').textContent = `${data.system.alertCount} active`;
-      const thamYai = data.nodes.find((node) => node.topic === 'ThamYai');
-      const rongPui = data.nodes.find((node) => node.topic === 'RongPui');
-      document.querySelector('#thamYaiBattery').textContent = thamYai?.batteryValue === null || thamYai?.batteryValue === undefined ? '-- V' : `${Number(thamYai.batteryValue).toFixed(2)} V`;
-      document.querySelector('#rongPuiBattery').textContent = rongPui?.batteryValue === null || rongPui?.batteryValue === undefined ? '-- V' : `${Number(rongPui.batteryValue).toFixed(2)} V`;
-      document.querySelector('#repeaterLink').textContent = data.system.repeaterLink.toUpperCase();
-      document.querySelector('#mqttStatus').textContent = data.system.mqttConnected ? 'CONNECTED' : 'OFFLINE';
-      document.querySelector('#notificationStatus').textContent = data.system.notificationEnabled === null ? 'UNKNOWN' : data.system.notificationEnabled ? 'ENABLED' : 'DISABLED';
-      notificationSwitch.checked = data.system.notificationEnabled === true;
-      notificationSwitch.disabled = !data.system.mqttConnected || data.system.notificationEnabled === null;
-      document.querySelector('#freshnessStatus').textContent = data.system.lastUpdate ? 'CURRENT' : 'WAITING';
-      document.querySelector('#masterDot').classList.toggle('offline', data.system.masterOnline === false);
-      document.querySelector('#masterState').textContent = data.system.masterOnline ? 'MASTER ONLINE' : 'MASTER OFFLINE';
-      document.querySelector('#events').innerHTML = data.events.map(({ time, title, detail }) => `<div class="event"><time>${new Date(time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</time><p>${title}<span>${detail}</span></p></div>`).join('');
-      }).catch(() => {});
+        document.querySelector('#updatedAt').textContent = `Updated ${new Date().toLocaleTimeString('th-TH')}`;
+        renderNodes(data.nodes);
+        document.querySelector('#responding').textContent = `${data.system.responding} / ${data.system.total}`;
+        document.querySelector('#lastUpdate').textContent = data.system.lastUpdate || '--';
+        document.querySelector('#alertCount').textContent = `${data.system.alertCount} active`;
+        const thamYai = data.nodes.find((node) => node.topic === 'ThamYai');
+        const rongPui = data.nodes.find((node) => node.topic === 'RongPui');
+        document.querySelector('#thamYaiBattery').textContent = thamYai?.batteryValue === null || thamYai?.batteryValue === undefined ? '-- V' : `${Number(thamYai.batteryValue).toFixed(2)} V`;
+        document.querySelector('#rongPuiBattery').textContent = rongPui?.batteryValue === null || rongPui?.batteryValue === undefined ? '-- V' : `${Number(rongPui.batteryValue).toFixed(2)} V`;
+        document.querySelector('#repeaterLink').textContent = data.system.repeaterLink.toUpperCase();
+        document.querySelector('#mqttStatus').textContent = data.system.mqttConnected ? 'CONNECTED' : 'OFFLINE';
+        document.querySelector('#notificationStatus').textContent = data.system.notificationEnabled === null ? 'UNKNOWN' : data.system.notificationEnabled ? 'ENABLED' : 'DISABLED';
+        notificationSwitch.checked = data.system.notificationEnabled === true;
+        notificationSwitch.disabled = !data.system.mqttConnected || data.system.notificationEnabled === null;
+        document.querySelector('#freshnessStatus').textContent = data.system.lastUpdate ? 'CURRENT' : 'WAITING';
+        document.querySelector('#masterDot').classList.toggle('offline', data.system.masterOnline === false);
+        document.querySelector('#masterState').textContent = data.system.masterOnline ? 'MASTER ONLINE' : 'MASTER OFFLINE';
+        document.querySelector('#events').innerHTML = data.events.map(({ time, title, detail }) => `<div class="event"><time>${new Date(time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</time><p>${title}<span>${detail}</span></p></div>`).join('');
+        setDashboardLoading(false);
+      }).catch(() => {
+        document.querySelector('#updatedAt').textContent = 'Waiting for live data';
+        renderLoadingNodes();
+      });
     }
     notificationSwitch.addEventListener('change', () => {
       notificationSwitch.disabled = true;
