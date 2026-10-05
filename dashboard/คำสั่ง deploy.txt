@@ -1,0 +1,2 @@
+cd /Users/koy/Documents/PlatformIO/Projects/Wat-Doi-Monitoring-System/dashboard
+./deploy.sh
