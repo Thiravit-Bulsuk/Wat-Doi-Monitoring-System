@@ -190,8 +190,8 @@
     nodeEl.innerHTML = '<div class="panel">Waiting for live node data...</div>';
 
     // Production gateway contract: GET /api/dashboard should return { nodes, system, events }.
-    function refreshDashboard() {
-      setLoadingState(true);
+    function refreshDashboard({ showLoading = false } = {}) {
+      if (showLoading) setLoadingState(true);
       fetch('/api/dashboard').then(r => r.ok ? r.json() : Promise.reject()).then(data => {
         setLoadingState(false);
         document.querySelector('#updatedAt').textContent = `Updated ${new Date().toLocaleTimeString('th-TH')}`;
@@ -224,8 +224,8 @@
         body: JSON.stringify({ enabled: notificationSwitch.checked })
       }).then(r => r.ok ? r.json() : Promise.reject()).then(() => refreshDashboard()).catch(() => refreshDashboard());
     });
-    refreshDashboard();
-    setInterval(refreshDashboard, 15000);
+    refreshDashboard({ showLoading: true });
+    setInterval(() => refreshDashboard(), 15000);
   </script>
 </body>
 </html>
