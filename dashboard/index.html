@@ -25,6 +25,48 @@
       color: var(--text);
       font-family: Arial, Helvetica, sans-serif;
       min-height: 100vh;
+      position: relative;
+    }
+    body.loading .shell { opacity: .45; pointer-events: none; filter: blur(1px); }
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(16, 19, 21, 0.7);
+      z-index: 20;
+      backdrop-filter: blur(3px);
+    }
+    body.loading .loading-overlay { display: grid; }
+    .loading-card {
+      display: grid;
+      place-items: center;
+      gap: 18px;
+      min-width: min(300px, calc(100vw - 32px));
+      padding: 28px 24px;
+      border: 1px solid var(--line);
+      background: rgba(23, 27, 30, 0.8);
+      box-shadow: var(--shadow);
+    }
+    .loading-spinner {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      border: 3px solid rgba(141, 201, 167, 0.25);
+      border-top-color: var(--green);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-title {
+      font: 700 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--green);
+    }
+    .loading-copy {
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
     }
     .shell { max-width: 1440px; margin: auto; padding: 28px 32px 44px; }
     header { display: flex; justify-content: space-between; align-items: end; gap: 24px; border-bottom: 1px solid var(--line); padding-bottom: 22px; }
@@ -86,6 +128,14 @@
   </style>
 </head>
 <body>
+  <div class="loading-overlay" aria-live="polite" aria-busy="true">
+    <div class="loading-card">
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <div class="loading-title">Loading dashboard</div>
+      <div class="loading-copy">Connecting to field data…</div>
+    </div>
+  </div>
+
   <main class="shell">
     <header>
       <div>
@@ -118,6 +168,11 @@
     const nodeEl = document.querySelector('#nodes');
     const notificationSwitch = document.querySelector('#notificationSwitch');
     const batteryCard = (label, id) => `<article class="node battery-card"><span class="label">${label}</span><span class="big voltage" id="${id}">-- V</span></article>`;
+
+    function setLoadingState(isLoading) {
+      document.body.classList.toggle('loading', isLoading);
+    }
+
     function renderNodes(nodes) {
       const waterCards = nodes.filter(node => node.kind !== 'spd').map(({ name, id, value, error }) => {
         const state = error ? 'low' : Number(value) < 50 ? 'low' : 'normal';
@@ -136,26 +191,30 @@
 
     // Production gateway contract: GET /api/dashboard should return { nodes, system, events }.
     function refreshDashboard() {
+      setLoadingState(true);
       fetch('/api/dashboard').then(r => r.ok ? r.json() : Promise.reject()).then(data => {
-      document.querySelector('#updatedAt').textContent = `Updated ${new Date().toLocaleTimeString('th-TH')}`;
-      renderNodes(data.nodes);
-      document.querySelector('#responding').textContent = `${data.system.responding} / ${data.system.total}`;
-      document.querySelector('#lastUpdate').textContent = data.system.lastUpdate || '--';
-      document.querySelector('#alertCount').textContent = `${data.system.alertCount} active`;
-      const thamYai = data.nodes.find((node) => node.topic === 'ThamYai');
-      const rongPui = data.nodes.find((node) => node.topic === 'RongPui');
-      document.querySelector('#thamYaiBattery').textContent = thamYai?.batteryValue === null || thamYai?.batteryValue === undefined ? '-- V' : `${Number(thamYai.batteryValue).toFixed(2)} V`;
-      document.querySelector('#rongPuiBattery').textContent = rongPui?.batteryValue === null || rongPui?.batteryValue === undefined ? '-- V' : `${Number(rongPui.batteryValue).toFixed(2)} V`;
-      document.querySelector('#repeaterLink').textContent = data.system.repeaterLink.toUpperCase();
-      document.querySelector('#mqttStatus').textContent = data.system.mqttConnected ? 'CONNECTED' : 'OFFLINE';
-      document.querySelector('#notificationStatus').textContent = data.system.notificationEnabled === null ? 'UNKNOWN' : data.system.notificationEnabled ? 'ENABLED' : 'DISABLED';
-      notificationSwitch.checked = data.system.notificationEnabled === true;
-      notificationSwitch.disabled = !data.system.mqttConnected || data.system.notificationEnabled === null;
-      document.querySelector('#freshnessStatus').textContent = data.system.lastUpdate ? 'CURRENT' : 'WAITING';
-      document.querySelector('#masterDot').classList.toggle('offline', data.system.masterOnline === false);
-      document.querySelector('#masterState').textContent = data.system.masterOnline ? 'MASTER ONLINE' : 'MASTER OFFLINE';
-      document.querySelector('#events').innerHTML = data.events.map(({ time, title, detail }) => `<div class="event"><time>${new Date(time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</time><p>${title}<span>${detail}</span></p></div>`).join('');
-      }).catch(() => {});
+        setLoadingState(false);
+        document.querySelector('#updatedAt').textContent = `Updated ${new Date().toLocaleTimeString('th-TH')}`;
+        renderNodes(data.nodes);
+        document.querySelector('#responding').textContent = `${data.system.responding} / ${data.system.total}`;
+        document.querySelector('#lastUpdate').textContent = data.system.lastUpdate || '--';
+        document.querySelector('#alertCount').textContent = `${data.system.alertCount} active`;
+        const thamYai = data.nodes.find((node) => node.topic === 'ThamYai');
+        const rongPui = data.nodes.find((node) => node.topic === 'RongPui');
+        document.querySelector('#thamYaiBattery').textContent = thamYai?.batteryValue === null || thamYai?.batteryValue === undefined ? '-- V' : `${Number(thamYai.batteryValue).toFixed(2)} V`;
+        document.querySelector('#rongPuiBattery').textContent = rongPui?.batteryValue === null || rongPui?.batteryValue === undefined ? '-- V' : `${Number(rongPui.batteryValue).toFixed(2)} V`;
+        document.querySelector('#repeaterLink').textContent = data.system.repeaterLink.toUpperCase();
+        document.querySelector('#mqttStatus').textContent = data.system.mqttConnected ? 'CONNECTED' : 'OFFLINE';
+        document.querySelector('#notificationStatus').textContent = data.system.notificationEnabled === null ? 'UNKNOWN' : data.system.notificationEnabled ? 'ENABLED' : 'DISABLED';
+        notificationSwitch.checked = data.system.notificationEnabled === true;
+        notificationSwitch.disabled = !data.system.mqttConnected || data.system.notificationEnabled === null;
+        document.querySelector('#freshnessStatus').textContent = data.system.lastUpdate ? 'CURRENT' : 'WAITING';
+        document.querySelector('#masterDot').classList.toggle('offline', data.system.masterOnline === false);
+        document.querySelector('#masterState').textContent = data.system.masterOnline ? 'MASTER ONLINE' : 'MASTER OFFLINE';
+        document.querySelector('#events').innerHTML = data.events.map(({ time, title, detail }) => `<div class="event"><time>${new Date(time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}</time><p>${title}<span>${detail}</span></p></div>`).join('');
+      }).catch(() => {
+        setLoadingState(false);
+      });
     }
     notificationSwitch.addEventListener('change', () => {
       notificationSwitch.disabled = true;
