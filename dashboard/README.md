@@ -46,30 +46,9 @@ cd /Users/koy/Documents/PlatformIO/Projects/Wat-Doi-Monitoring-System/dashboard
 PROJECT_ID=watdoi-monitoring ./deploy.sh
 ```
 
-## Manual deploy command
+## Do not run `gcloud run deploy` by hand
 
-```bash
-cd /Users/koy/Documents/PlatformIO/Projects/Wat-Doi-Monitoring-System/dashboard
-
-/Applications/google-cloud-sdk/bin/gcloud run deploy wat-doi-dashboard \
-  --source . \
-  --region=asia-southeast1 \
-  --project watdoi-monitoring \
-  --allow-unauthenticated \
-  --set-env-vars="MQTT_URL=mqtts://a7821161.ala.us-east-1.emqxsl.com:8883" \
-  --set-secrets="MQTT_USERNAME=mqtt-username:latest,MQTT_PASSWORD=mqtt-password:latest"
-```
-
-## Cleanup old deployment
-
-Only after the new project is confirmed to work:
-
-```bash
-/Applications/google-cloud-sdk/bin/gcloud run services delete wat-doi-dashboard \
-  --region=asia-southeast1 \
-  --project dji-flight-parser \
-  --quiet
-```
+Always deploy with `deploy.sh`. `gcloud run deploy --set-env-vars` replaces every env var on the service, so a manual command without `HISTORY_TOKEN` and `CONTROL_PASSWORD` removes them: history uploads then return 503 and the master command buttons stop working. `deploy.sh` sets all of them from `dashboard/.env`.
 
 ## Service URL
 

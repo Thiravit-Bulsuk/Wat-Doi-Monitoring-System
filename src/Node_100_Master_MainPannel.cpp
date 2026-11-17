@@ -202,6 +202,31 @@ bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c
 -----END CERTIFICATE-----
 )EOF";
 
+// GTS Root R4 (live Cloud Run certificate chain)
+static const char *gts_root_r4 PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDejCCAmKgAwIBAgIQf+UwvzMTQ77dghYQST2KGzANBgkqhkiG9w0BAQsFADBX
+MQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFsU2lnbiBudi1zYTEQMA4GA1UE
+CxMHUm9vdCBDQTEbMBkGA1UEAxMSR2xvYmFsU2lnbiBSb290IENBMB4XDTIzMTEx
+NTAzNDMyMVoXDTI4MDEyODAwMDA0MlowRzELMAkGA1UEBhMCVVMxIjAgBgNVBAoT
+GUdvb2dsZSBUcnVzdCBTZXJ2aWNlcyBMTEMxFDASBgNVBAMTC0dUUyBSb290IFI0
+MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE83Rzp2iLYK5DuDXFgTB7S0md+8Fhzube
+Rr1r1WEYNa5A3XP3iZEwWus87oV8okB2O6nGuEfYKueSkWpz6bFyOZ8pn6KY019e
+WIZlD6GEZQbR3IvJx3PIjGov5cSr0R2Ko4H/MIH8MA4GA1UdDwEB/wQEAwIBhjAd
+BgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwDwYDVR0TAQH/BAUwAwEB/zAd
+BgNVHQ4EFgQUgEzW63T/STaj1dj8tT7FavCUHYwwHwYDVR0jBBgwFoAUYHtmGkUN
+l8qJUC99BM00qP/8/UswNgYIKwYBBQUHAQEEKjAoMCYGCCsGAQUFBzAChhpodHRw
+Oi8vaS5wa2kuZ29vZy9nc3IxLmNydDAtBgNVHR8EJjAkMCKgIKAehhxodHRwOi8v
+Yy5wa2kuZ29vZy9yL2dzcjEuY3JsMBMGA1UdIAQMMAowCAYGZ4EMAQIBMA0GCSqG
+SIb3DQEBCwUAA4IBAQAYQrsPBtYDh5bjP2OBDwmkoWhIDDkic574y04tfzHpn+cJ
+odI2D4SseesQ6bDrarZ7C30ddLibZatoKiws3UL9xnELz4ct92vID24FfVbiI1hY
++SW6FoVHkNeWIP0GCbaM4C6uVdF5dTUsMVs/ZbzNnIdCp5Gxmx5ejvEau8otR/Cs
+kGN+hr/W5GvT1tMBjgWKZ1i4//emhA1JG1BbPzoLJQvyEotc03lXjTaCzv8mEbep
+8RqZ7a2CPsgRbuvTPBwcOMBBmuFeU88+FSBX6+7iP0il8b4Z0QFqIwwMHfs/L6K1
+vepuoxtGzi4CZ68zJpiq1UvSqTbFJjtbD4seiMHl
+-----END CERTIFICATE-----
+)EOF";
+
 // Define LoRa settings
 #define LORA_DEVICE DEVICE_SX1262
 #define NSS 8
@@ -826,14 +851,29 @@ void displayData(String tankName, String message) {
 
 void DisplayTimerTask(void *pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
+    bool wasDisplaySessionActive = false;
 
     for (;;) {
         if (!displaySessionActive) {
-            display.clear();
-            display.display();
+            if (wasDisplaySessionActive) {
+                display.setBrightness(DISPLAY_BRIGHTNESS_IDLE);
+                display.clear();
+                display.display();
+                wasDisplaySessionActive = false;
+                lastLedHeartbeatTime = millis();
+                Serial.println("DEBUG: Display window ended; OLED off");
+            } else {
+                display.clear();
+                display.display();
+            }
             xLastWakeTime = xTaskGetTickCount();
             vTaskDelay(100 / portTICK_PERIOD_MS);
             continue;
+        }
+
+        if (!wasDisplaySessionActive) {
+            display.setBrightness(DISPLAY_BRIGHTNESS_ACTIVE);
+            wasDisplaySessionActive = true;
         }
 
         int currentTotalDisplayItems = numNodes;
@@ -1035,7 +1075,7 @@ void uploadHistory() {
     body += "]}";
 
     WiFiClientSecure httpsClient;
-    httpsClient.setCACert(gts_root_r1);
+    httpsClient.setCACert(gts_root_r4);
     HTTPClient http;
     http.setTimeout(10000);
     if (!http.begin(httpsClient, HISTORY_URL)) return;
@@ -1183,7 +1223,6 @@ void DisplayControlButtonTask(void *parameter) {
                 if (digitalRead(RESET_BUTTON_PIN) == LOW) {
                     buttonPressed = true;
                     Serial.println("DEBUG: Button Pressed - Showing display at full brightness for 1 minute");
-                    display.setBrightness(DISPLAY_BRIGHTNESS_ACTIVE);
                     displaySessionActive = true;
                     displaySessionStartTime = millis();
                     displayPageState = 0;
@@ -1198,12 +1237,7 @@ void DisplayControlButtonTask(void *parameter) {
 
         // หมดเวลาความสว่างสูงแล้ว ให้ปิดจอและกลับเข้าสู่ heartbeat mode
         if (displaySessionActive && (millis() - displaySessionStartTime >= DISPLAY_BOOST_DURATION_MS)) {
-            display.setBrightness(DISPLAY_BRIGHTNESS_IDLE);
             displaySessionActive = false;
-            display.clear();
-            display.display();
-            lastLedHeartbeatTime = millis();
-            Serial.println("DEBUG: Display window ended; OLED off");
         }
 
         if (!displaySessionActive) {
