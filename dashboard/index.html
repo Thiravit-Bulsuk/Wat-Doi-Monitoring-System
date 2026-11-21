@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wat Doi Monitoring</title>
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <style>
+    :root {
+      --bg: #101315;
+      --panel: #171b1e;
+      --panel-2: #1d2326;
+      --line: #30383c;
+      --text: #edf1ef;
+      --muted: #899397;
+      --green: #8dc9a7;
+      --amber: #e7b86d;
+      --red: #e07b75;
+      --blue: #84b9d0;
+      --shadow: 0 16px 36px rgba(0, 0, 0, .22);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 75% -20%, #26302f 0, transparent 38%), var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      min-height: 100vh;
+    }
+    .shell { max-width: 1440px; margin: auto; padding: 28px 32px 44px; }
+    header { display: flex; justify-content: space-between; align-items: end; gap: 24px; border-bottom: 1px solid var(--line); padding-bottom: 22px; }
+    .eyebrow { color: var(--green); font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 2px; text-transform: uppercase; }
+    h1 { font-size: clamp(30px, 5vw, 54px); font-weight: 400; letter-spacing: 0; margin: 9px 0 4px; }
+    .sub { color: var(--muted); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .connection { display: flex; align-items: center; gap: 9px; color: var(--green); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px rgba(141, 201, 167, .12); }
+    .dot.offline { background: var(--red); box-shadow: 0 0 0 5px rgba(224, 123, 117, .12); }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0 30px; }
+    .summary-card, .node { background: linear-gradient(145deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); box-shadow: var(--shadow); }
+    .summary-card { padding: 18px 20px; min-height: 105px; }
+    .label { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: 1px; }
+    .big { display: block; font-size: 31px; margin-top: 12px; }
+    .good { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--red); }
+    section { margin-top: 24px; }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+    h2 { font-size: 21px; font-weight: 400; margin: 0; }
+    .section-note { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .nodes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+    .node { min-height: 330px; padding: 18px 18px 20px; position: relative; overflow: hidden; }
+    .node.spd { grid-column: 1 / -1; aspect-ratio: auto; min-height: 170px; }
+    .battery-card { grid-column: span 2; aspect-ratio: auto; min-height: 118px; padding: 18px; }
+    .battery-card .voltage { color: var(--green); font-size: 36px; margin-top: 14px; }
+    .node::after { content: ""; position: absolute; inset: auto -30px -52px auto; width: 130px; height: 130px; border: 1px solid rgba(141, 201, 167, .13); border-radius: 50%; }
+    .node-top { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+    .node-name { font-size: 20px; }
+    .node-id { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 5px; }
+    .state { border: 1px solid currentColor; padding: 4px 7px; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .meter { --ring-gap: 22px; width: min(154px, 72%); aspect-ratio: 1; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--level) * 1%), #293033 0); margin: 18px auto 12px; display: grid; place-items: center; position: relative; }
+    .meter::after { content: ""; width: calc(100% - var(--ring-gap)); aspect-ratio: 1; border-radius: 50%; background: var(--panel); position: absolute; }
+    .meter.low { background: conic-gradient(var(--amber) calc(var(--level) * 1%), #293033 0); }
+    .meter > span { position: relative; z-index: 1; color: var(--text); font: 700 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .reading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 8px; padding-bottom: 10px; }
+    .percent { font-size: clamp(28px, 3vw, 42px); line-height: 1.05; font-weight: 700; }
+    .unit { color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .meta { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 12px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 34px; }
+    .bottom { display: grid; grid-template-columns: 1.3fr .7fr; gap: 12px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); padding: 20px; }
+    .timeline { display: grid; gap: 14px; margin-top: 17px; }
+    .event { display: grid; grid-template-columns: 80px 1fr; gap: 14px; font-size: 14px; }
+    .event time { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding-top: 2px; }
+    .event p { margin: 0; color: #c6cecb; }
+    .event p span { color: var(--muted); display: block; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; }
+    .system-list { display: grid; gap: 16px; margin-top: 18px; }
+    .system-row { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; }
+    .system-row span:last-child { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .control { display: flex; align-items: center; gap: 10px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; inset: 0; background: #2a3134; border: 1px solid var(--line); transition: .2s; }
+    .slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: var(--muted); transition: .2s; }
+    .switch input:checked + .slider { border-color: var(--green); background: rgba(141, 201, 167, .12); }
+    .switch input:checked + .slider::before { transform: translateX(18px); background: var(--green); }
+    .switch input:disabled + .slider { cursor: not-allowed; opacity: .5; }
+    body.loading .shell { opacity: 0; visibility: hidden; pointer-events: none; }
+    body.loaded .shell { opacity: 1; visibility: visible; pointer-events: auto; }
+    body { transition: opacity .2s ease; }
+    .loading-screen {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: rgba(16, 19, 21, 0.92);
+      backdrop-filter: blur(8px);
+      z-index: 20;
+      opacity: 1;
+      visibility: visible;
+      transition: opacity .2s ease, visibility .2s ease;
+    }
+    body.loaded .loading-screen {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .loading-panel {
+      width: min(420px, calc(100% - 32px));
+      padding: 28px 24px;
+      border: 1px solid var(--line);
+      background: rgba(23, 27, 30, 0.96);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .loading-spinner {
+      width: 42px;
+      height: 42px;
+      margin: 0 auto 18px;
+      border-radius: 50%;
+      border: 3px solid rgba(141, 201, 167, .22);
+      border-top-color: var(--green);
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-title { font-size: 24px; font-weight: 700; }
+    .loading-sub { color: var(--muted); margin-top: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1px; text-transform: uppercase; }
+    footer { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 28px; }
+    .node[data-node] { cursor: pointer; transition: border-color .15s; }
+    .node[data-node]:hover { border-color: var(--green); }
+    .node-hint { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .timeline { max-height: 420px; overflow-y: auto; padding-right: 6px; }
+    .chart-modal { position: fixed; inset: 0; z-index: 30; display: none; place-items: center; background: rgba(8, 10, 11, .78); padding: 16px; overflow: hidden; }
+    .chart-modal.open { display: grid; }
+    .chart-box { width: min(860px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); padding: 20px; }
+    .chart-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+    .chart-title { font-size: 24px; }
+    .chart-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 16px 0 8px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .chart-nav span { min-width: 170px; text-align: center; }
+    .chart-btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); padding: 7px 12px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+    .chart-btn:disabled { opacity: .35; cursor: not-allowed; }
+    .chart-svg { width: 100%; height: 280px; display: block; touch-action: none; }
+    .chart-svg text { fill: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .chart-stats { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 10px; min-height: 18px; }
+    .chart-stats b { color: var(--text); font-weight: 400; }
+    .command-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 22px; }
+    .cmd-btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); padding: 10px 6px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .5px; cursor: pointer; }
+    .cmd-btn:hover:not(:disabled) { border-color: var(--green); }
+    .cmd-btn.danger { color: var(--red); }
+    .cmd-btn.danger:hover:not(:disabled) { border-color: var(--red); }
+    .cmd-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .cmd-status { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 10px; min-height: 14px; }
+    @media (max-width: 1050px) { .nodes { grid-template-columns: repeat(2, minmax(0, 1fr)); } .battery-card { grid-column: span 1; } .summary { grid-template-columns: repeat(2, 1fr); } }
+    @media (orientation: landscape) and (max-height: 500px) {
+      .chart-modal { padding: 6px; }
+      .chart-box { max-height: calc(100dvh - 12px); padding: 8px 12px; }
+      .chart-head { align-items: center; }
+      .chart-title { font-size: 16px; }
+      .chart-head .sub { line-height: 1.2; }
+      .chart-nav { margin: 6px 0 2px; }
+      .chart-nav span { min-width: 130px; }
+      .chart-btn { padding: 5px 8px; }
+      .chart-svg { height: 190px; }
+      .chart-stats { margin-top: 4px; min-height: 14px; }
+    }
+    @media (max-width: 720px) { .shell { padding: 22px 16px 34px; } header { align-items: start; flex-direction: column; } .summary, .bottom { grid-template-columns: 1fr; } .node { padding: 12px 10px 14px; display: flex; flex-direction: column; gap: 0; aspect-ratio: auto; min-height: 228px; } .battery-card { grid-column: span 1; min-height: 104px; } .battery-card .voltage { font-size: 26px; } .node-name { font-size: 16px; } .node-id, .state, .meta { font-size: 9px; } .unit { font-size: 9px; } .meter { --ring-gap: 16px; width: min(120px, 62%); margin: 14px auto 8px; transform: translateY(-2px); } .meter::after { width: calc(100% - var(--ring-gap)); } .reading { gap: 0; margin-top: 0; padding-bottom: 12px; justify-content: flex-start; align-items: flex-start; flex-direction: row; min-height: auto; width: 100%; } .percent { font-size: 30px; line-height: 1; margin-left: 4px; } .unit { margin-left: 6px; align-self: center; } .meta { margin-top: auto; padding-top: 9px; } .summary-card { min-height: 88px; } }
+  </style>
+</head>
+<body class="loading">
+  <div class="loading-screen" aria-live="polite" aria-busy="true">
+    <div class="loading-panel">
+      <div class="loading-spinner"></div>
+      <div class="loading-title">Loading</div>
+      <div class="loading-sub">Connecting to monitoring system</div>
+    </div>
+  </div>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Field Operations / Wat Doi</div>
+        <h1>Water Monitoring</h1>
+        <div class="sub">ภาพรวมระดับน้ำและสถานะระบบภาคสนาม</div>
+      </div>
+      <div class="connection"><span class="dot" id="masterDot"></span><span id="masterState">MASTER ONLINE</span></div>
+    </header>
+
+    <div class="summary">
+      <div class="summary-card"><span class="label">Nodes responding</span><span class="big" id="responding">-- / --</span></div>
+      <div class="summary-card"><span class="label">Last update</span><span class="big" id="lastUpdate">--</span></div>
+      <div class="summary-card"><span class="label">Repeater link</span><span class="big" id="repeaterLink">UNKNOWN</span></div>
+      <div class="summary-card"><span class="label">Alerts</span><span class="big" id="alertCount">-- active</span></div>
+    </div>
+
+    <section>
+      <div class="section-head"><h2>Tank readings</h2><span class="section-note">LIVE / refreshed every 3 min</span></div>
+      <div class="nodes" id="nodes"></div>
+    </section>
+
+    <section class="bottom">
+      <div class="panel"><div class="section-head"><h2>Recent events</h2><span class="section-note">SYSTEM LOG / 3 DAYS</span></div><div class="timeline" id="events"></div></div>
+      <div class="panel"><div class="section-head"><h2>System status</h2><span class="section-note">MASTER 100</span></div><div class="system-list"><div class="system-row"><span>MQTT connection</span><span id="mqttStatus">WAITING</span></div><div class="system-row"><span>Notification service</span><span class="control"><span id="notificationStatus">WAITING</span><label class="switch"><input id="notificationSwitch" type="checkbox" disabled><span class="slider"></span></label></span></div><div class="system-row"><span>Data freshness</span><span id="freshnessStatus">WAITING</span></div><div class="system-row"><span>Battery nodes</span><span>2 monitored</span></div></div><div class="command-row"><button class="cmd-btn" data-cmd="request_data">Request data</button><button class="cmd-btn" data-cmd="reset_notification">Reset notification</button><button class="cmd-btn danger" data-cmd="reset_system">Reset system</button></div><div class="cmd-status" id="cmdStatus"></div></div>
+    </section>
+    <footer>Wat Doi Monitoring System · <span id="updatedAt">Waiting for live data</span></footer>
+  </main>
+  <div class="chart-modal" id="chartModal" role="dialog" aria-modal="true" aria-labelledby="chartTitle">
+    <div class="chart-box">
+      <div class="chart-head">
+        <div><div class="chart-title" id="chartTitle">--</div><div class="sub" id="chartSub">ระดับน้ำ (%)</div></div>
+        <button class="chart-btn" id="chartClose" aria-label="ปิด">✕</button>
+      </div>
+      <div class="chart-nav">
+        <button class="chart-btn" id="chartPrev">‹ วันก่อน</button>
+        <span id="chartDay">--</span>
+        <button class="chart-btn" id="chartNext">วันถัดไป ›</button>
+      </div>
+      <svg class="chart-svg" id="chartSvg" viewBox="0 0 640 280" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="chart-stats" id="chartStats"></div>
+    </div>
+  </div>
+  <script>
+    const nodeEl = document.querySelector('#nodes');
+    const notificationSwitch = document.querySelector('#notificationSwitch');
+    const batteryCard = (label, id) => `<article class="node battery-card"><span class="label">${label}</span><span class="big voltage" id="${id}">-- V</span></article>`;
+    let hasInitialLoad = false;
+    let commandBusy = false;
+
+    const COMMANDS = {
+      request_data: { confirm: 'สั่งให้ Master อ่านค่าจากทุก Node ทันที?', done: 'ส่งคำสั่งแล้ว ค่าใหม่จะขึ้นภายใน 1-2 นาที' },
+      reset_notification: { confirm: 'รีเซ็ตสถานะแจ้งเตือนและปิด Relay ทั้งหมด?', done: 'ส่งคำสั่ง reset notification แล้ว' },
+      reset_system: { confirm: 'รีสตาร์ทบอร์ด Master? ระบบจะออฟไลน์ประมาณ 1 นาที', done: 'ส่งคำสั่งแล้ว Master กำลังรีสตาร์ท' }
+    };
+
+    function getControlPassword() {
+      return localStorage.getItem('controlPassword') || prompt('ใส่รหัสควบคุมระบบ');
+    }
+
+    async function sendCommand(action) {
+      const command = COMMANDS[action];
+      if (!confirm(command.confirm)) return;
+      const password = getControlPassword();
+      if (!password) return;
+      const status = document.querySelector('#cmdStatus');
+      commandBusy = true;
+      document.querySelectorAll('.cmd-btn').forEach((button) => { button.disabled = true; });
+      status.textContent = 'กำลังส่งคำสั่ง...';
+      try {
+        const res = await fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-control-password': password },
+          body: JSON.stringify({ action })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) localStorage.removeItem('controlPassword');
+        if (!res.ok) throw new Error(data.error || 'ส่งคำสั่งไม่สำเร็จ');
+        localStorage.setItem('controlPassword', password);
+        status.textContent = command.done;
+        setTimeout(loadLogs, 70000);
+      } catch (error) {
+        status.textContent = error.message || 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';
+      } finally {
+        commandBusy = false;
+        refreshDashboard();
+      }
+    }
+
+    document.querySelectorAll('.cmd-btn').forEach((button) => button.addEventListener('click', () => sendCommand(button.dataset.cmd)));
+
+    function setDashboardLoading(isLoading) {
+      document.body.classList.toggle('loading', isLoading);
+      document.body.classList.toggle('loaded', !isLoading);
+    }
+
+    function isDashboardReady(data) {
+      if (!data || !Array.isArray(data.nodes) || !data.nodes.length) {
+        return false;
+      }
+
+      if (!data.system || data.system.mqttConnected !== true || !data.system.lastUpdate) {
+        return false;
+      }
+
+      return data.nodes.every((node) => {
+        const valueReady = node.updatedAt !== null && node.updatedAt !== undefined;
+        const batteryReady = node.battery === true ? node.batteryValue !== null && node.batteryValue !== undefined : true;
+        return valueReady && batteryReady;
+      });
+    }
+
+    function renderLoadingNodes() {
+      const skeletonCards = Array.from({ length: 5 }, (_, index) => {
+        if (index === 4) {
+          return '<article class="node battery-card" style="opacity:0.7"><span class="label">Loading battery</span><span class="big voltage">-- V</span></article>';
+        }
+        return '<article class="node" style="opacity:0.7"><div class="node-top"><div><div class="node-name">Loading</div><div class="node-id">NODE --</div></div><div class="state good">LOADING</div></div><div class="meter" style="--level:0; background: conic-gradient(#2b3235 100%, #293033 0);"><span>--</span></div><div class="reading"><span class="percent good">--%</span><span class="unit">water level</span></div><div class="meta"><span>Polling mode</span><span>wait...</span></div></article>';
+      }).join('');
+      nodeEl.innerHTML = skeletonCards;
+    }
+
+    function renderNodes(nodes) {
+      const waterCards = nodes.filter(node => node.kind !== 'spd').map(({ name, id, topic, value, error }) => {
+        const state = error ? 'low' : Number(value) < 50 ? 'low' : 'normal';
+        const label = `${value ?? '--'}%`;
+        const meter = value === null ? '' : `<div class="meter ${state === 'low' ? 'low' : ''}" style="--level:${value}"><span>${value}%</span></div>`;
+        return `<article class="node" data-node="${topic}" title="ดูกราฟระดับน้ำ"><div class="node-top"><div><div class="node-name">${name}</div><div class="node-id">NODE ${id}</div></div><div class="state ${state === 'low' ? 'warn' : 'good'}">${state.toUpperCase()}</div></div>${meter}<div class="reading"><span class="percent ${state === 'low' ? 'warn' : 'good'}">${label}</span><span class="unit">water level</span></div><div class="meta"><span>Polling mode</span><span class="node-hint">แตะดูกราฟ ›</span></div></article>`;
+      }).join('');
+      const batteryCards = batteryCard('ThamYai battery', 'thamYaiBattery') + batteryCard('RongPui battery', 'rongPuiBattery');
+      const spdCards = nodes.filter(node => node.kind === 'spd').map(({ name, id, value }) => {
+        const label = value === 0 ? 'SPD OK' : 'SPD ALERT';
+        return `<article class="node spd"><div class="node-top"><div><div class="node-name">${name}</div><div class="node-id">NODE ${id}</div></div><div class="state good">SPD</div></div><div class="reading"><span class="percent good">${label}</span><span class="unit">protection status</span></div><div class="meta"><span>Polling mode</span><span>3 min cycle</span></div></article>`;
+      }).join('');
+      nodeEl.innerHTML = waterCards + batteryCards + spdCards;
+    }
+
+    renderLoadingNodes();
+    setDashboardLoading(true);
+
+    function refreshDashboard({ showLoading = false } = {}) {
+      if (showLoading) {
+        setDashboardLoading(true);
+      }
+
+      fetch('/api/dashboard', { cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject()).then((data) => {
+        // Server อาจเพิ่ง cold start (Cloud Run) และยังไม่ได้รับ retained MQTT ครบ: แสดง loading แทนค่า offline/-- ชั่วคราว
+        if (!isDashboardReady(data)) {
+          setDashboardLoading(true);
+          scheduleRefresh(2000);
+          return;
+        }
+        document.querySelector('#updatedAt').textContent = `Updated ${new Date().toLocaleTimeString('th-TH')}`;
+        renderNodes(data.nodes);
+        document.querySelector('#responding').textContent = `${data.system.responding} / ${data.system.total}`;
+        document.querySelector('#lastUpdate').textContent = data.system.lastUpdate || '--';
+        document.querySelector('#alertCount').textContent = `${data.system.alertCount} active`;
+        const thamYai = data.nodes.find((node) => node.topic === 'ThamYai');
+        const rongPui = data.nodes.find((node) => node.topic === 'RongPui');
+        document.querySelector('#thamYaiBattery').textContent = thamYai?.batteryValue === null || thamYai?.batteryValue === undefined ? '-- V' : `${Number(thamYai.batteryValue).toFixed(2)} V`;
+        document.querySelector('#rongPuiBattery').textContent = rongPui?.batteryValue === null || rongPui?.batteryValue === undefined ? '-- V' : `${Number(rongPui.batteryValue).toFixed(2)} V`;
+        document.querySelector('#repeaterLink').textContent = data.system.repeaterLink.toUpperCase();
+        document.querySelector('#mqttStatus').textContent = data.system.mqttConnected ? 'CONNECTED' : 'OFFLINE';
+        document.querySelector('#notificationStatus').textContent = data.system.notificationEnabled === null ? 'UNKNOWN' : data.system.notificationEnabled ? 'ENABLED' : 'DISABLED';
+        notificationSwitch.checked = data.system.notificationEnabled === true;
+        notificationSwitch.disabled = !data.system.mqttConnected || data.system.notificationEnabled === null;
+        document.querySelectorAll('.cmd-btn').forEach((button) => { button.disabled = !data.system.mqttConnected || commandBusy; });
+        document.querySelector('#freshnessStatus').textContent = data.system.lastUpdate ? 'CURRENT' : 'WAITING';
+        document.querySelector('#masterDot').classList.toggle('offline', data.system.masterOnline === false);
+        document.querySelector('#masterState').textContent = data.system.masterOnline ? 'MASTER ONLINE' : 'MASTER OFFLINE';
+
+        if (!hasInitialLoad) loadLogs();
+        hasInitialLoad = true;
+        setDashboardLoading(false);
+        scheduleRefresh(REFRESH_INTERVAL_MS);
+      }).catch(() => {
+        document.querySelector('#updatedAt').textContent = 'Waiting for live data';
+        setDashboardLoading(true);
+        scheduleRefresh(2000);
+      });
+    }
+
+    const REFRESH_INTERVAL_MS = 15000;
+    const LONG_HIDDEN_MS = 60000;
+    let refreshTimer = null;
+    let hiddenSince = null;
+
+    function scheduleRefresh(delay) {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => refreshDashboard(), delay);
+    }
+
+    // กลับมาจากแอปอื่นหลังผ่านไปนาน: แสดง loading ทันทีแล้วดึงข้อมูลใหม่ แทนการโชว์ข้อมูลเก่า/offline
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        hiddenSince = Date.now();
+        clearTimeout(refreshTimer);
+        return;
+      }
+      const longAway = hiddenSince !== null && Date.now() - hiddenSince > LONG_HIDDEN_MS;
+      hiddenSince = null;
+      refreshDashboard({ showLoading: longAway });
+      loadLogs();
+      if (chart.node) loadChart();
+    });
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) refreshDashboard({ showLoading: true });
+    });
+
+    notificationSwitch.addEventListener('change', async () => {
+      const password = getControlPassword();
+      if (!password) return refreshDashboard(); // ยกเลิก: คืนสถานะสวิตช์ตามเซิร์ฟเวอร์
+      notificationSwitch.disabled = true;
+      const status = document.querySelector('#cmdStatus');
+      try {
+        const res = await fetch('/api/notification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-control-password': password },
+          body: JSON.stringify({ enabled: notificationSwitch.checked })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) localStorage.removeItem('controlPassword');
+        if (!res.ok) throw new Error(data.error || 'เปลี่ยนสถานะการแจ้งเตือนไม่สำเร็จ');
+        localStorage.setItem('controlPassword', password);
+        status.textContent = '';
+      } catch (error) {
+        status.textContent = error.message || 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';
+      } finally {
+        refreshDashboard();
+      }
+    });
+
+    refreshDashboard({ showLoading: true });
+
+    // ---------- System log (3 days, from Firestore via the server) ----------
+    const LOG_REFRESH_MS = 60000;
+    const BANGKOK_OFFSET_MS = 7 * 3600 * 1000;
+    const DAY_MS = 24 * 3600 * 1000;
+    const bangkokDay = (ms) => new Date(ms + BANGKOK_OFFSET_MS).toISOString().slice(0, 10);
+    const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let logTimer = null;
+
+    function formatLogTime(iso) {
+      const ms = Date.parse(iso);
+      const time = new Date(ms).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
+      if (bangkokDay(ms) === bangkokDay(Date.now())) return time;
+      return `${new Date(ms).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', timeZone: 'Asia/Bangkok' })} ${time}`;
+    }
+
+    function loadLogs() {
+      clearTimeout(logTimer);
+      if (document.hidden) return;
+      // no-cache lets the browser revalidate with ETag, so unchanged logs cost no download.
+      fetch('/api/logs', { cache: 'no-cache' }).then(r => r.ok ? r.json() : Promise.reject()).then(({ logs }) => {
+        document.querySelector('#events').innerHTML = logs.length
+          ? logs.map(({ time, text }) => `<div class="event"><time>${formatLogTime(time)}</time><p>${escapeHtml(text)}</p></div>`).join('')
+          : '<div class="event"><time>--</time><p>ยังไม่มีเหตุการณ์ใน 3 วันที่ผ่านมา</p></div>';
+      }).catch(() => {}).finally(() => { logTimer = setTimeout(loadLogs, LOG_REFRESH_MS); });
+    }
+
+    // ---------- Level chart (1 day, up to 2 days back) ----------
+    const chart = { node: null, offset: 0, cache: new Map() };
+    const chartModal = document.querySelector('#chartModal');
+    const chartSvg = document.querySelector('#chartSvg');
+    const W = 640, H = 280, PAD = { l: 40, r: 14, t: 14, b: 30 };
+    const GAP_MS = 15 * 60 * 1000;
+
+    function openChart(node) {
+      chart.node = node;
+      chart.offset = 0;
+      chartModal.classList.add('open');
+      loadChart();
+    }
+
+    function closeChart() {
+      chart.node = null;
+      chartModal.classList.remove('open');
+    }
+
+    async function loadChart() {
+      const day = bangkokDay(Date.now() - chart.offset * DAY_MS);
+      const isToday = chart.offset === 0;
+      document.querySelector('#chartTitle').textContent = chart.node;
+      document.querySelector('#chartDay').textContent = isToday ? `วันนี้ (${day})` : day;
+      document.querySelector('#chartPrev').disabled = chart.offset >= 2;
+      document.querySelector('#chartNext').disabled = isToday;
+      document.querySelector('#chartStats').textContent = 'กำลังโหลด...';
+      chartSvg.innerHTML = '';
+      const key = `${chart.node}/${day}`;
+      try {
+        let data = isToday ? null : chart.cache.get(key);
+        if (!data) {
+          const res = await fetch(`/api/levels?node=${encodeURIComponent(chart.node)}&day=${day}`, { cache: 'no-cache' });
+          if (!res.ok) throw new Error();
+          data = await res.json();
+          chart.cache.set(key, data);
+        }
+        if (`${chart.node}/${bangkokDay(Date.now() - chart.offset * DAY_MS)}` === key) drawChart(data);
+      } catch {
+        document.querySelector('#chartStats').textContent = 'โหลดข้อมูลไม่สำเร็จ';
+      }
+    }
+
+    function drawChart({ points, threshold, dayStart }) {
+      const x = (t) => PAD.l + ((t - dayStart) / DAY_MS) * (W - PAD.l - PAD.r);
+      const y = (v) => PAD.t + (1 - v / 100) * (H - PAD.t - PAD.b);
+      let svg = '';
+      for (const v of [0, 25, 50, 75, 100]) {
+        svg += `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${y(v)}" y2="${y(v)}" stroke="#30383c" stroke-width="1"/><text x="${PAD.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+      }
+      for (let h = 0; h <= 24; h += 3) {
+        svg += `<text x="${x(dayStart + h * 3600000)}" y="${H - 10}" text-anchor="middle">${String(h).padStart(2, '0')}:00</text>`;
+      }
+      if (threshold) {
+        svg += `<line x1="${PAD.l}" x2="${W - PAD.r}" y1="${y(threshold)}" y2="${y(threshold)}" stroke="#e7b86d" stroke-dasharray="5 4" stroke-width="1"/><text x="${W - PAD.r}" y="${y(threshold) - 5}" text-anchor="end" style="fill:#e7b86d">เกณฑ์แจ้งเตือน ${threshold}%</text>`;
+      }
+      // Break the line at missing readings (comm error or no sample for a while).
+      let path = '';
+      let prevT = null;
+      const valid = points.filter((p) => p.v !== null);
+      for (const p of points) {
+        if (p.v === null) { prevT = null; continue; }
+        path += `${prevT === null || p.t - prevT > GAP_MS ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`;
+        prevT = p.t;
+      }
+      if (path) svg += `<path d="${path}" fill="none" stroke="#8dc9a7" stroke-width="2" stroke-linejoin="round"/>`;
+      if (valid.length === 1) svg += `<circle cx="${x(valid[0].t)}" cy="${y(valid[0].v)}" r="3" fill="#8dc9a7"/>`;
+      svg += '<g id="chartCursor" style="display:none"><line y1="' + PAD.t + '" y2="' + (H - PAD.b) + '" stroke="#899397" stroke-dasharray="2 3"/><circle r="4" fill="#edf1ef"/></g>';
+      chartSvg.innerHTML = svg;
+
+      const stats = document.querySelector('#chartStats');
+      if (!valid.length) {
+        stats.textContent = 'ไม่มีข้อมูลในวันนี้';
+        chartSvg.onpointermove = chartSvg.onpointerleave = null;
+        return;
+      }
+      const values = valid.map((p) => p.v);
+      const hm = (t) => new Date(t).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
+      const summary = `ล่าสุด <b>${values.at(-1)}%</b> (${hm(valid.at(-1).t)}) · ต่ำสุด <b>${Math.min(...values)}%</b> · สูงสุด <b>${Math.max(...values)}%</b>`;
+      stats.innerHTML = summary;
+
+      const cursor = chartSvg.querySelector('#chartCursor');
+      chartSvg.onpointermove = (event) => {
+        const box = chartSvg.getBoundingClientRect();
+        const px = ((event.clientX - box.left) / box.width) * W;
+        const t = dayStart + ((px - PAD.l) / (W - PAD.l - PAD.r)) * DAY_MS;
+        const p = valid.reduce((best, q) => Math.abs(q.t - t) < Math.abs(best.t - t) ? q : best);
+        cursor.style.display = '';
+        cursor.querySelector('line').setAttribute('x1', x(p.t));
+        cursor.querySelector('line').setAttribute('x2', x(p.t));
+        cursor.querySelector('circle').setAttribute('cx', x(p.t));
+        cursor.querySelector('circle').setAttribute('cy', y(p.v));
+        stats.innerHTML = `เวลา <b>${hm(p.t)}</b> · ระดับน้ำ <b>${p.v}%</b>`;
+      };
+      chartSvg.onpointerleave = () => { cursor.style.display = 'none'; stats.innerHTML = summary; };
+    }
+
+    nodeEl.addEventListener('click', (event) => {
+      const card = event.target.closest('[data-node]');
+      if (card) openChart(card.dataset.node);
+    });
+    document.querySelector('#chartClose').addEventListener('click', closeChart);
+    chartModal.addEventListener('click', (event) => { if (event.target === chartModal) closeChart(); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeChart(); });
+    document.querySelector('#chartPrev').addEventListener('click', () => { chart.offset = Math.min(2, chart.offset + 1); loadChart(); });
+    document.querySelector('#chartNext').addEventListener('click', () => { chart.offset = Math.max(0, chart.offset - 1); loadChart(); });
+  </script>
+</body>
+</html>

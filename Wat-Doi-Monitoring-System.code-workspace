@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"platformio-ide.showEditorTitleShortcuts": false,
+		"platformio-ide.toolbar": [
+			{
+				"text": "$(cloud-upload)",
+				"tooltip": "PlatformIO: Upload and Monitor",
+				"commands": "platformio-ide.uploadAndMonitor"
+			}
+		]
+	}
+}
